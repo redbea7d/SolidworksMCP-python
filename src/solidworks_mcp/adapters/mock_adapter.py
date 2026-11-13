@@ -1514,6 +1514,13 @@ class MockSolidWorksAdapter(SolidWorksAdapter):
             execution_time=0.02,
         )
 
+    async def edit_sketch(self, sketch_name: str) -> AdapterResult[dict[str, Any]]:
+        """Open a mock sketch for editing; the mock has no stored entities."""
+        return AdapterResult(
+            status=AdapterResultStatus.SUCCESS,
+            data={"sketch": sketch_name, "entities": []},
+        )
+
     async def set_sketch_construction(
         self, entity_id: str, construction: bool = True
     ) -> AdapterResult[str]:

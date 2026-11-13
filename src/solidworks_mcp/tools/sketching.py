@@ -252,6 +252,18 @@ class AddDimensionInput(BaseModel):
     value: float = Field(description="Dimension value in mm or degrees")
 
 
+class EditSketchInput(BaseModel):
+    """Input schema for opening an existing sketch.
+
+    Attributes:
+        sketch_name (str): The sketch's name in the feature tree.
+    """
+
+    sketch_name: str = Field(
+        description="Sketch name as in the feature tree, e.g. 'Sketch3' or 'Bolt Holes'"
+    )
+
+
 class AddRelationInput(BaseModel):
     """Input schema for adding a geometric relation.
 
@@ -591,6 +603,34 @@ async def register_sketching_tools(
                 "height": height,
                 "area": width * height,
             },
+            "execution_time": result.execution_time,
+        }
+
+    @mcp.tool()
+    async def edit_sketch(input_data: EditSketchInput) -> dict[str, Any]:
+        """Open an existing sketch for editing and list its lines, circles and arcs with IDs.
+
+        Use it to add dimensions or relations to a sketch made earlier (in this or a
+        past session), or to draw more in it. Every entity gets an ID (`Line_1`,
+        `Circle_2`, `Arc_3`) that `add_sketch_dimension`, `add_sketch_constraint`
+        and the other sketch tools take; IDs from before are no longer valid. Then
+        `exit_sketch`, which rebuilds the features built from the sketch. Needs: an
+        open part with the sketch and no other sketch open. Changes: opens the sketch.
+        Returns: `sketch` (the name) and `entities`, each with `id`, `type`,
+        `construction` and its coordinates in mm (`start`/`end`, or
+        `center`/`radius`).
+        """
+        input_data = normalize_input(input_data, EditSketchInput)
+        result = await adapter.edit_sketch(input_data.sketch_name)
+        require_success(result, context="Failed to edit sketch")
+        names_on_exit.clear()  # an edited sketch keeps its name
+        data = result.data or {}
+        entities = data.get("entities", [])
+        return {
+            "status": "success",
+            "message": f"Editing sketch '{data.get('sketch')}' with {len(entities)} entities",
+            "sketch": data.get("sketch"),
+            "entities": entities,
             "execution_time": result.execution_time,
         }
 

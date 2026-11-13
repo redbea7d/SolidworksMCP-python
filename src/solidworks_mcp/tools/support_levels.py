@@ -226,6 +226,7 @@ SUPPORT_LEVELS: dict[str, Support] = {
     "check_sketch_fully_defined": _STABLE,
     "create_sketch": _STABLE,
     "exit_sketch": _STABLE,
+    "edit_sketch": _UNCHECKED,
     "sketch_circular_pattern": _STABLE,
     "sketch_linear_pattern": _STABLE,
     "sketch_mirror": _STABLE,

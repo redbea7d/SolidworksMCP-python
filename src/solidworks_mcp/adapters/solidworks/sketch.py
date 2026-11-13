@@ -163,6 +163,9 @@ class SolidWorksSketchMixin:
     ) -> AdapterResult[str]:
         return _set_sketch_construction_impl(self, entity_id, construction)
 
+    async def edit_sketch(self, sketch_name: str) -> AdapterResult[dict[str, Any]]:
+        return _edit_sketch_impl(self, sketch_name)
+
     async def add_sketch_dimension(
         self, entity1: str, entity2: str | None, dimension_type: str, value: float
     ) -> AdapterResult[str]:
@@ -1381,6 +1384,153 @@ def _point_to_point_dimension(
     adapter._set_display_dimension_value(display_dim, value)
     adapter._attempt(lambda: model.ClearSelection2(True), default=None)
     return cast(str, adapter._register_sketch_entity("Dimension", display_dim))
+
+
+#: ``swSketchSegments_e`` values to the ID prefixes the add_* tools use.
+_SEGMENT_PREFIXES = {0: "Line", 1: "Arc", 2: "Ellipse", 3: "Spline", 5: "Parabola"}
+
+
+def _mm(value_m: float) -> float:
+    """Metres to millimetres, rounded to hide float noise."""
+    return round(float(value_m) * 1000.0, 6)
+
+
+def _describe_segment(adapter: Any, segment: Any) -> tuple[str, dict[str, Any], tuple[float, float] | None]:
+    """Work out what an existing sketch segment is, for ``edit_sketch``.
+
+    Returns:
+        tuple: ``(prefix, details, centre_mm)``. ``prefix`` is ``Line``,
+        ``Circle``, ``Arc`` and so on; ``details`` is what the reply shows
+        (coordinates in mm); ``centre_mm`` is recorded for dimension
+        placement (a line's midpoint, a circle's centre).
+    """
+    adapter._attempt(
+        lambda: _sw_type_info.flag_methods(segment, "ISketchSegment"), default=0
+    )
+    seg_type = adapter._attempt(
+        lambda: int(adapter._get_attr_or_call(segment, "GetType")), default=-1
+    )
+    construction = bool(
+        adapter._attempt(lambda: segment.ConstructionGeometry, default=False)
+    )
+    prefix = _SEGMENT_PREFIXES.get(seg_type, "Segment")
+    details: dict[str, Any] = {"construction": construction}
+    centre_mm: tuple[float, float] | None = None
+
+    def _xy(point: Any) -> tuple[float, float] | None:
+        xyz = _point_xyz(adapter, point) if point is not None else None
+        return (_mm(xyz[0]), _mm(xyz[1])) if xyz else None
+
+    if seg_type == 0:
+        adapter._attempt(
+            lambda: _sw_type_info.flag_methods(segment, "ISketchLine"), default=0
+        )
+        start = _xy(adapter._attempt(lambda: adapter._get_attr_or_call(segment, "GetStartPoint2")))
+        end = _xy(adapter._attempt(lambda: adapter._get_attr_or_call(segment, "GetEndPoint2")))
+        if start and end:
+            details.update(
+                start={"x": start[0], "y": start[1]},
+                end={"x": end[0], "y": end[1]},
+                length=round(((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5, 6),
+            )
+            centre_mm = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+    elif seg_type == 1:
+        adapter._attempt(
+            lambda: _sw_type_info.flag_methods(segment, "ISketchArc"), default=0
+        )
+        centre = _xy(adapter._attempt(lambda: adapter._get_attr_or_call(segment, "GetCenterPoint2")))
+        radius_m = adapter._attempt(lambda: adapter._get_attr_or_call(segment, "GetRadius"))
+        is_circle = adapter._attempt(
+            lambda: bool(adapter._get_attr_or_call(segment, "IsCircle")), default=False
+        )
+        if is_circle:
+            prefix = "Circle"
+        if centre:
+            details["center"] = {"x": centre[0], "y": centre[1]}
+            centre_mm = centre
+        if radius_m is not None:
+            details["radius"] = _mm(radius_m)
+            details["diameter"] = _mm(2 * float(radius_m))
+        if not is_circle:
+            start = _xy(adapter._attempt(lambda: adapter._get_attr_or_call(segment, "GetStartPoint2")))
+            end = _xy(adapter._attempt(lambda: adapter._get_attr_or_call(segment, "GetEndPoint2")))
+            if start and end:
+                details.update(start={"x": start[0], "y": start[1]}, end={"x": end[0], "y": end[1]})
+    return prefix, details, centre_mm
+
+
+def _edit_sketch_impl(adapter: Any, sketch_name: str) -> AdapterResult[dict[str, Any]]:
+    """Open an existing sketch for editing and register the entities in it.
+
+    The sketch is found by name in the feature tree (any case), selected
+    (checked by selection count) and opened with ``IModelDoc2.EditSketch``.
+    Every segment gets an ID like the add_* tools give (``Line_1``,
+    ``Circle_2``, ``Arc_3``) so ``add_sketch_dimension``,
+    ``add_sketch_constraint`` and the add_* tools work on it; ``exit_sketch``
+    closes it and rebuilds the features built from it.
+
+    Returns:
+        AdapterResult[dict[str, Any]]: ``sketch`` (the name) and
+        ``entities``: a list of ``{"id", "type", ...coordinates in mm}``.
+    """
+    if not adapter.currentModel:
+        return AdapterResult(status=AdapterResultStatus.ERROR, error="No active model")
+
+    def _operation() -> dict[str, Any]:
+        from .features import _profile_feature_names, _select_sketch_verified
+
+        model = adapter.currentModel
+        adapter._attempt(lambda: _sw_type_info.flag_methods(model, "IModelDoc2"), default=0)
+        if adapter.currentSketchManager is not None or adapter._attempt(
+            lambda: model.GetActiveSketch2(), default=None
+        ):
+            raise Exception("A sketch is already open; call exit_sketch first.")
+
+        names = _profile_feature_names(adapter)
+        target = next((n for n in names if n.lower() == sketch_name.strip().lower()), None)
+        if target is None:
+            available = ", ".join(names) if names else "(none found)"
+            raise Exception(f"Sketch '{sketch_name}' not found. Sketches: {available}")
+
+        select_error = _select_sketch_verified(adapter, target)
+        if select_error:
+            raise Exception(select_error)
+        model.EditSketch()
+
+        sketch_manager = model.SketchManager
+        adapter._attempt(
+            lambda: _sw_type_info.flag_methods(sketch_manager, "ISketchManager"), default=0
+        )
+        sketch = adapter._attempt(lambda: sketch_manager.ActiveSketch) or adapter._attempt(
+            lambda: model.GetActiveSketch2()
+        )
+        if sketch is None:
+            raise Exception(f"SolidWorks did not open '{target}' for editing")
+
+        adapter.currentSketchManager = sketch_manager
+        adapter.currentSketch = sketch
+        adapter._last_sketch_name = target
+        adapter._reset_sketch_entity_registry()
+        adapter._attempt(lambda: setattr(sketch_manager, "AddToDB", True))
+        adapter._attempt(lambda: model.ClearSelection2(True), default=None)
+
+        adapter._attempt(lambda: _sw_type_info.flag_methods(sketch, "ISketch"), default=0)
+        segments = adapter._attempt(
+            lambda: adapter._get_attr_or_call(sketch, "GetSketchSegments"), default=None
+        )
+        entities: list[dict[str, Any]] = []
+        for segment in segments or ():
+            prefix, details, centre_mm = _describe_segment(adapter, segment)
+            entity_id = adapter._register_sketch_entity(prefix, segment)
+            if centre_mm is not None:
+                adapter._sketch_entity_centers[entity_id] = centre_mm
+            entities.append({"id": entity_id, "type": prefix.lower(), **details})
+        return {"sketch": target, "entities": entities}
+
+    return cast(
+        AdapterResult[dict[str, Any]],
+        adapter._handle_com_operation("edit_sketch", _operation),
+    )
 
 
 def _set_sketch_construction_impl(

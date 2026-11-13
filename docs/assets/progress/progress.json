@@ -1,10 +1,10 @@
 {
  "tools": {
-  "total": 156,
+  "total": 157,
   "by_level": {
    "stable": 106,
    "beta": 0,
-   "experimental": 10,
+   "experimental": 11,
    "planned": 40
   },
   "list": [
@@ -476,6 +476,13 @@
     "level": "stable",
     "reason": "",
     "summary": "Rebuild the SolidWorks API index on purpose. The lookups don't need it."
+   },
+   {
+    "name": "edit_sketch",
+    "family": "sketching",
+    "level": "experimental",
+    "reason": "not yet checked by a live test on real SolidWorks.",
+    "summary": "Open an existing sketch for editing and list its lines, circles and arcs with IDs."
    },
    {
     "name": "execute_macro",
@@ -1105,11 +1112,11 @@
  "com": {
   "type_library": "83A33D31-27C5-11CE-BFD4-00400513BB57x0x34x0",
   "core": {
-   "covered": 217,
+   "covered": 219,
    "total": 2838
   },
   "api": {
-   "covered": 240,
+   "covered": 242,
    "total": 5985
   },
   "interfaces": [
@@ -1160,6 +1167,7 @@
      "CreateLine",
      "CreateLinearSketchStepAndRepeat",
      "EditRebuild3",
+     "EditSketch",
      "EditSuppress2",
      "EditUndo",
      "EditUndo2",
@@ -1284,6 +1292,7 @@
      "Create3rdAngleViews2",
      "CreateDrawViewFromModelView3",
      "EditSheet",
+     "EditSketch",
      "EditTemplate",
      "FeatureByName",
      "GetCurrentSheet",

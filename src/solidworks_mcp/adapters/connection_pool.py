@@ -1117,6 +1117,12 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
             lambda adapter: adapter.set_sketch_construction(entity_id, construction),
         )
 
+    async def edit_sketch(self, sketch_name: str) -> AdapterResult[dict[str, Any]]:
+        """Edit an existing sketch using pool."""
+        return await self._execute_with_pool(
+            "edit_sketch", lambda adapter: adapter.edit_sketch(sketch_name)
+        )
+
     async def add_sketch_dimension(
         self,
         entity1: str,

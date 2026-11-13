@@ -1193,6 +1193,14 @@ class CircuitBreakerAdapter(SolidWorksAdapter):
             input_dict={"entity_id": entity_id, "construction": construction},
         )
 
+    async def edit_sketch(self, sketch_name: str) -> AdapterResult[dict[str, Any]]:
+        """Edit an existing sketch through circuit breaker."""
+        return await self._execute_with_circuit_breaker(
+            "edit_sketch",
+            lambda: self.adapter.edit_sketch(sketch_name),
+            input_dict={"sketch_name": sketch_name},
+        )
+
     async def add_sketch_dimension(
         self,
         entity1: str,

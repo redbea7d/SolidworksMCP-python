@@ -799,6 +799,20 @@ class SolidWorksAdapter(ABC):
             error="set_sketch_construction is not implemented by this adapter",
         )
 
+    async def edit_sketch(self, sketch_name: str) -> AdapterResult[dict[str, Any]]:
+        """Open an existing sketch for editing and list its entities.
+
+        Args:
+            sketch_name (str): The sketch's name in the feature tree.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: The sketch name and its entities.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="edit_sketch is not implemented by this adapter",
+        )
+
     async def add_sketch_dimension(
         self,
         entity1: str,
