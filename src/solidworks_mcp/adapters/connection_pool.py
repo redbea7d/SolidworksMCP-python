@@ -1108,6 +1108,15 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
             ),
         )
 
+    async def set_sketch_construction(
+        self, entity_id: str, construction: bool = True
+    ) -> AdapterResult[str]:
+        """Set construction geometry using pool."""
+        return await self._execute_with_pool(
+            "set_sketch_construction",
+            lambda adapter: adapter.set_sketch_construction(entity_id, construction),
+        )
+
     async def add_sketch_dimension(
         self,
         entity1: str,

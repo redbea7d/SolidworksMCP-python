@@ -1514,6 +1514,12 @@ class MockSolidWorksAdapter(SolidWorksAdapter):
             execution_time=0.02,
         )
 
+    async def set_sketch_construction(
+        self, entity_id: str, construction: bool = True
+    ) -> AdapterResult[str]:
+        """Mark a mock sketch entity as construction geometry."""
+        return AdapterResult(status=AdapterResultStatus.SUCCESS, data=entity_id)
+
     async def add_line(
         self, x1: float, y1: float, x2: float, y2: float
     ) -> AdapterResult[str]:

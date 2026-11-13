@@ -1183,6 +1183,16 @@ class CircuitBreakerAdapter(SolidWorksAdapter):
             },
         )
 
+    async def set_sketch_construction(
+        self, entity_id: str, construction: bool = True
+    ) -> AdapterResult[str]:
+        """Set construction geometry through circuit breaker."""
+        return await self._execute_with_circuit_breaker(
+            "set_sketch_construction",
+            lambda: self.adapter.set_sketch_construction(entity_id, construction),
+            input_dict={"entity_id": entity_id, "construction": construction},
+        )
+
     async def add_sketch_dimension(
         self,
         entity1: str,

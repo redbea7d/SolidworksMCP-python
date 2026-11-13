@@ -782,6 +782,23 @@ class SolidWorksAdapter(ABC):
             error="add_sketch_constraint is not implemented by this adapter",
         )
 
+    async def set_sketch_construction(
+        self, entity_id: str, construction: bool = True
+    ) -> AdapterResult[str]:
+        """Mark a sketch entity as construction geometry (or back to normal).
+
+        Args:
+            entity_id (str): The ID an add_* tool returned.
+            construction (bool): True for construction geometry.
+
+        Returns:
+            AdapterResult[str]: The entity ID.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="set_sketch_construction is not implemented by this adapter",
+        )
+
     async def add_sketch_dimension(
         self,
         entity1: str,

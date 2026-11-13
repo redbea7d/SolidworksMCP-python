@@ -158,6 +158,11 @@ class SolidWorksSketchMixin:
             self, entity1, entity2, relation_type, entity3
         )
 
+    async def set_sketch_construction(
+        self, entity_id: str, construction: bool = True
+    ) -> AdapterResult[str]:
+        return _set_sketch_construction_impl(self, entity_id, construction)
+
     async def add_sketch_dimension(
         self, entity1: str, entity2: str | None, dimension_type: str, value: float
     ) -> AdapterResult[str]:
@@ -1130,6 +1135,299 @@ def _add_sketch_constraint_impl(
     )
 
 
+#: Dimension types that measure between points rather than along a segment.
+_POINT_DIMENSION_TYPES = {
+    "horizontal",
+    "vertical",
+    "point_to_point",
+    "center_to_center",
+    "distance",
+}
+
+#: Offset of a point-to-point dimension's text from its points, in metres.
+_POINT_DIMENSION_OFFSET_M = 0.012
+
+
+def _split_point_ref(ref: str) -> tuple[str, str | None]:
+    """Split ``"Circle_1.center"`` into ``("Circle_1", "center")``.
+
+    ``"origin"`` (any case) becomes ``("origin", None)``; a bare ID has no
+    point part.
+    """
+    text = ref.strip()
+    if text.lower() in {"origin", "point1@origin"}:
+        return ("origin", None)
+    if "." in text:
+        base, part = text.rsplit(".", 1)
+        return (base, part.strip().lower() or None)
+    return (text, None)
+
+
+def _is_round_entity(entity_id: str) -> bool:
+    """True for IDs the add_* tools give circles, arcs and polygons' circles."""
+    return entity_id.split("_", 1)[0].lower() in {"circle", "arc", "ellipse"}
+
+
+def _is_point_dimension(
+    adapter: Any, entity1: str, entity2: str | None, dimension_type: str | None
+) -> bool:
+    """Whether a dimension request should be made between sketch points.
+
+    It should when the type is horizontal, vertical or one of the
+    point-to-point names; when either reference names a point
+    (``Circle_1.center``, ``Line_2.start``, ``origin``); or when a linear
+    dimension joins two round entities (circle to circle means centre to
+    centre, as SolidWorks' smart dimension does).
+    """
+    dim_type = (dimension_type or "linear").strip().lower()
+    if dim_type in _POINT_DIMENSION_TYPES:
+        return True
+    if dim_type != "linear" or not entity2:
+        return False
+    refs = [_split_point_ref(entity1), _split_point_ref(entity2)]
+    if any(base == "origin" or part is not None for base, part in refs):
+        return True
+    return all(_is_round_entity(base) for base, _ in refs)
+
+
+def _point_xyz(adapter: Any, point: Any) -> tuple[float, float, float] | None:
+    """An ``ISketchPoint``'s coordinates in metres, or ``None``."""
+    coords = []
+    for axis in ("X", "Y", "Z"):
+        value = adapter._attempt(lambda a=axis: getattr(point, a), default=None)
+        if value is None:
+            return None
+        coords.append(float(value))
+    return (coords[0], coords[1], coords[2])
+
+
+def _resolve_dimension_point(
+    adapter: Any, ref: str
+) -> tuple[Any, tuple[float, float, float]]:
+    """Turn a reference into something selectable and where it is.
+
+    Args:
+        adapter: A ``PyWin32Adapter`` with an open sketch.
+        ref: ``"origin"``, an entity ID, or an entity ID with ``.center``
+            (circles and arcs), ``.start`` or ``.end`` (lines and arcs). A
+            bare circle or arc ID means its centre; a bare line ID means
+            the whole line.
+
+    Returns:
+        tuple: ``(target, xyz)``. ``target`` is ``"origin"`` or a COM object
+        to select; ``xyz`` is in metres.
+
+    Raises:
+        Exception: Unknown entity, unknown point name, or a point that cannot
+            be read from SolidWorks.
+    """
+    base, part = _split_point_ref(ref)
+    if base == "origin":
+        return ("origin", (0.0, 0.0, 0.0))
+
+    entity = adapter._sketch_entities.get(base)
+    if entity is None:
+        raise Exception(
+            f"Unknown sketch entity '{base}'. Use IDs returned by the add_* tools, "
+            "optionally with .center, .start or .end, or 'origin'."
+        )
+    if part is None and _is_round_entity(base):
+        part = "center"
+    if part is None:
+        xyz = _sketch_point_xyz(adapter, base, entity)
+        if xyz is None:
+            raise Exception(f"Cannot read where '{base}' is")
+        return (entity, xyz)
+
+    getter = {
+        "center": "GetCenterPoint2",
+        "centre": "GetCenterPoint2",
+        "start": "GetStartPoint2",
+        "end": "GetEndPoint2",
+    }.get(part)
+    if getter is None:
+        raise Exception(
+            f"Unknown point '{part}' in '{ref}'. Use .center, .start or .end."
+        )
+    interface = "ISketchArc" if _is_round_entity(base) else "ISketchLine"
+    adapter._attempt(
+        lambda: _sw_type_info.flag_methods(entity, interface), default=0
+    )
+    point = adapter._attempt(
+        lambda: adapter._get_attr_or_call(entity, getter), default=None
+    )
+    if point is None:
+        raise Exception(f"Cannot get the {part} point of '{base}' from SolidWorks")
+    xyz = _point_xyz(adapter, point)
+    if xyz is None and part in {"center", "centre"}:
+        xyz = _sketch_point_xyz(adapter, base, entity)
+    if xyz is None:
+        raise Exception(f"Cannot read where the {part} point of '{base}' is")
+    return (point, xyz)
+
+
+def _point_dimension_text(
+    kind: str, p1: tuple[float, float, float], p2: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    """Where to put a point-to-point dimension's text, clear of both points."""
+    mid_x, mid_y = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
+    if kind == "horizontal":
+        return (mid_x, max(p1[1], p2[1]) + _POINT_DIMENSION_OFFSET_M, 0.0)
+    if kind == "vertical":
+        return (max(p1[0], p2[0]) + _POINT_DIMENSION_OFFSET_M, mid_y, 0.0)
+    dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+    length = (dx * dx + dy * dy) ** 0.5
+    if length <= 1e-9:
+        return (mid_x + _POINT_DIMENSION_OFFSET_M, mid_y, 0.0)
+    nx, ny = -dy / length, dx / length
+    return (
+        mid_x + nx * _POINT_DIMENSION_OFFSET_M,
+        mid_y + ny * _POINT_DIMENSION_OFFSET_M,
+        0.0,
+    )
+
+
+def _point_to_point_dimension(
+    adapter: Any,
+    entity1: str,
+    entity2: str | None,
+    dimension_type: str | None,
+    value: float,
+) -> str:
+    """Add a driving dimension between two sketch points (or a point and a line).
+
+    ``dimension_type`` ``horizontal`` and ``vertical`` measure along X or Y
+    of the sketch; anything else (``linear``, ``point_to_point``,
+    ``center_to_center``, ``distance``) is the straight-line distance. With
+    no ``entity2``, ``horizontal``/``vertical`` measure ``entity1`` alone
+    (a line's X or Y extent).
+
+    Selection is judged by the selection count, not by the return of
+    ``Select4``, which reports ``False`` on some installs even when the
+    point is selected.
+
+    Returns:
+        str: The registered ID of the new dimension.
+
+    Raises:
+        Exception: When a reference cannot be resolved or selected, or
+            SolidWorks does not create the dimension.
+    """
+    model = adapter.currentModel
+    kind = (dimension_type or "linear").strip().lower()
+    if kind not in {"horizontal", "vertical"}:
+        kind = "aligned"
+
+    refs = [entity1] + ([entity2] if entity2 else [])
+    resolved = [_resolve_dimension_point(adapter, ref) for ref in refs]
+    if len(resolved) == 1:
+        if kind == "aligned":
+            raise Exception(
+                "A point-to-point dimension needs entity2: the second point, "
+                "e.g. 'Circle_2' or 'origin'."
+            )
+        resolved.append(resolved[0])
+
+    def _count() -> int:
+        return int(
+            adapter._attempt(
+                lambda: model.SelectionManager.GetSelectedObjectCount2(-1),
+                default=0,
+            )
+            or 0
+        )
+
+    def _select(target: Any, append: bool) -> None:
+        if target == "origin":
+            from .features import _null_callout
+
+            model.Extension.SelectByID2(
+                "Point1@Origin", "EXTSKETCHPOINT", 0.0, 0.0, 0.0, append, 0,
+                _null_callout(), 0,
+            )
+        else:
+            adapter._select_sketch_entity(target, append)
+
+    adapter._attempt(lambda: model.ClearSelection2(True), default=None)
+    _select(resolved[0][0], False)
+    if _count() < 1:
+        raise Exception(f"Could not select '{refs[0]}'")
+    if len(refs) == 2:
+        _select(resolved[1][0], True)
+        if _count() < 2:
+            raise Exception(f"Could not select '{refs[1]}'")
+
+    text = _point_dimension_text(kind, resolved[0][1], resolved[1][1])
+    creators = {
+        "horizontal": [lambda: model.AddHorizontalDimension2(*text)],
+        "vertical": [lambda: model.AddVerticalDimension2(*text)],
+        "aligned": [
+            lambda: model.AddDimension2(*text),
+            lambda: model.Extension.AddDimension(
+                *text, adapter.constants["swSmartDimensionDirectionUp"]
+            ),
+        ],
+    }[kind]
+    display_dim = None
+    for create in creators:
+        display_dim = adapter._attempt(create, default=None)
+        if display_dim:
+            break
+    if not display_dim:
+        raise Exception(
+            f"SolidWorks did not create the {kind} dimension between "
+            f"{' and '.join(refs)}"
+        )
+    adapter._set_display_dimension_value(display_dim, value)
+    adapter._attempt(lambda: model.ClearSelection2(True), default=None)
+    return cast(str, adapter._register_sketch_entity("Dimension", display_dim))
+
+
+def _set_sketch_construction_impl(
+    adapter: Any, entity_id: str, construction: bool
+) -> AdapterResult[str]:
+    """Mark a sketch entity as construction geometry, or clear the mark.
+
+    Sets ``ISketchSegment.ConstructionGeometry`` on the entity (on each of
+    a rectangle's four lines) and reads it back. Construction geometry is
+    ignored by extrude and cut, so reference lines no longer break a
+    profile.
+
+    Returns:
+        AdapterResult[str]: The entity ID; ``ERROR`` when the entity is
+        unknown or SolidWorks did not keep the setting.
+    """
+    if not adapter.currentSketchManager:
+        return AdapterResult(status=AdapterResultStatus.ERROR, error="No active sketch")
+
+    def _operation() -> str:
+        entity = adapter._sketch_entities.get(entity_id)
+        if entity is None:
+            raise Exception(
+                f"Unknown sketch entity '{entity_id}'. Use the ID an add_* tool returned."
+            )
+        segments = list(entity) if isinstance(entity, (list, tuple)) else [entity]
+        for segment in segments:
+            adapter._attempt(
+                lambda s=segment: _sw_type_info.flag_methods(s, "ISketchSegment"),
+                default=0,
+            )
+            segment.ConstructionGeometry = bool(construction)
+            kept = adapter._attempt(
+                lambda s=segment: bool(s.ConstructionGeometry), default=None
+            )
+            if kept is not None and kept != bool(construction):
+                raise Exception(
+                    f"SolidWorks did not keep the construction setting on '{entity_id}'"
+                )
+        return entity_id
+
+    return cast(
+        AdapterResult[str],
+        adapter._handle_com_operation("set_sketch_construction", _operation),
+    )
+
+
 def _add_sketch_dimension_impl(
     adapter: Any,
     entity1: str,
@@ -1240,6 +1538,14 @@ def _add_sketch_dimension_impl(
 
         if not adapter.currentModel:
             return f"Dimension_{int(time.time() * 1000) % 10000}"
+
+        # Point-to-point, centre-to-centre, origin and horizontal/vertical
+        # dimensions go through their own path: they select sketch points
+        # (circle centres, line ends, the origin), not whole segments.
+        if _is_point_dimension(adapter, entity1, entity2, dimension_type):
+            return _point_to_point_dimension(
+                adapter, entity1, entity2, dimension_type, value
+            )
 
         entity1_obj = adapter._sketch_entities.get(entity1)
         if entity1_obj is None:

@@ -229,12 +229,25 @@ class AddDimensionInput(BaseModel):
         value (float): The value value.
     """
 
-    entity1: str = Field(description="First entity name or ID")
+    entity1: str = Field(
+        description=(
+            "First entity ID, or a point: 'Circle_1.center', 'Line_2.start', "
+            "'Line_2.end' or 'origin'"
+        )
+    )
     entity2: str | None = Field(
-        default=None, description="Second entity name or ID (for distance dimensions)"
+        default=None,
+        description=(
+            "Second entity ID or point, for distance, centre-to-centre, "
+            "horizontal and vertical dimensions"
+        ),
     )
     dimension_type: str = Field(
-        default="linear", description="Dimension type (linear, radial, angular, etc.)"
+        default="linear",
+        description=(
+            "linear, horizontal, vertical, point_to_point, center_to_center, "
+            "radial, diameter or angular"
+        ),
     )
     value: float = Field(description="Dimension value in mm or degrees")
 
@@ -315,6 +328,28 @@ class CheckSketchDefinitionInput(CompatInput):
         default=None,
         description="Optional sketch name. If omitted, checks the active or last sketch.",
     )
+
+
+
+async def _apply_construction(
+    adapter: SolidWorksAdapter, entity_id: Any, construction: bool
+) -> None:
+    """Mark a just-drawn entity as construction geometry when asked.
+
+    The draw calls take no construction flag, so before this the flag was
+    echoed back in the reply but never reached SolidWorks: "construction"
+    lines were real lines and broke extrude profiles.
+    """
+    if not construction:
+        return
+    setter = getattr(adapter, "set_sketch_construction", None)
+    if setter is None:
+        raise RuntimeError(
+            "This adapter cannot mark construction geometry; draw it without "
+            "construction=true or use add_centerline."
+        )
+    result = await setter(str(entity_id), True)
+    require_success(result, context="Failed to mark construction geometry")
 
 
 async def register_sketching_tools(
@@ -434,6 +469,7 @@ async def register_sketching_tools(
             if isinstance(result.data, dict)
             else result.data
         )
+        await _apply_construction(adapter, line_id, input_data.construction)
         x1, y1 = input_data.x1 or 0.0, input_data.y1 or 0.0
         x2, y2 = input_data.x2 or 0.0, input_data.y2 or 0.0
         return {
@@ -484,6 +520,7 @@ async def register_sketching_tools(
             if isinstance(result.data, dict)
             else result.data
         )
+        await _apply_construction(adapter, circle_id, input_data.construction)
         return {
             "status": "success",
             "message": f"Added circle at ({input_data.center_x}, {input_data.center_y}) with radius {input_data.radius}mm",
@@ -536,6 +573,7 @@ async def register_sketching_tools(
             if isinstance(result.data, dict)
             else result.data
         )
+        await _apply_construction(adapter, rect_id, input_data.construction)
         rx1, ry1 = input_data.x1 or 0.0, input_data.y1 or 0.0
         rx2, ry2 = input_data.x2 or 0.0, input_data.y2 or 0.0
         width = abs(rx2 - rx1)
@@ -851,12 +889,18 @@ async def register_sketching_tools(
 
     @mcp.tool()
     async def add_sketch_dimension(input_data: AddDimensionInput) -> dict[str, Any]:
-        """Add a driving dimension to sketch entities: linear, angular, radial or diameter.
+        """Add a driving dimension to sketch entities: linear, angular, radial, diameter, horizontal or vertical.
 
         Use it to fix a size so the sketch is fully defined and can be changed later
         with `set_dimension`. Entities are the `id`s the add_* tools returned; two
-        connected lines for angular, a circle or arc for radial or diameter. No dialog
-        opens. Needs: an open sketch (`create_sketch`). Changes: adds the dimension and
+        connected lines for angular, a circle or arc for radial or diameter.
+        Point-to-point: give two points as `entity1`/`entity2`, each an ID with
+        `.center` (circle/arc), `.start` or `.end` (line/arc), or `origin`; a bare
+        circle ID means its centre, so two circles give centre-to-centre.
+        `dimension_type` `horizontal` or `vertical` measures along sketch X or Y
+        (e.g. bolt spacing, or `origin` to `Circle_1` for a centre height);
+        `linear` (or `point_to_point`/`center_to_center`) is the straight distance.
+        No dialog opens. Needs: an open sketch (`create_sketch`). Changes: adds the dimension and
         resizes the geometry to `value`. Returns: `dimension` with `id`, `type`, `value`
         and the entities.
 
