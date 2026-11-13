@@ -1384,7 +1384,12 @@ def _resolve_profile_sketch(
             0,
         )
     )
-    sketch_selected = bool(select_result)
+    # SelectByID2's boolean is unreliable on some installs: it returns False
+    # while the sketch IS selected. Judge by the selection count, and fall
+    # back to Feature.Select2 (with contour selection off) before failing.
+    sketch_selected = bool(select_result) or _selected_count(adapter) > 0
+    if not sketch_selected:
+        sketch_selected = _select_sketch_verified(adapter, target_sketch) is None
     if not sketch_selected:
         reason = (
             f" COM error: {select_error}"
@@ -3691,4 +3696,75 @@ def _pattern_circular_impl(
     return cast(
         AdapterResult[dict[str, Any]],
         adapter._handle_com_operation("pattern_circular", _pattern_operation),
+    )
+
+
+def _selected_count(adapter: Any) -> int:
+    """Return how many objects are currently selected in the active model.
+
+    Returns 0 when the count cannot be read.
+    """
+    def _count() -> int:
+        sel_mgr = adapter.currentModel.SelectionManager
+        return int(sel_mgr.GetSelectedObjectCount2(-1) or 0)
+
+    try:
+        return _count()
+    except Exception:
+        return 0
+
+
+def _select_sketch_verified(adapter: Any, sketch_name: str) -> str | None:
+    """Select a sketch by name and confirm it is really selected.
+
+    On some SolidWorks installs ``SelectByID2`` and ``IFeature.Select2``
+    return ``False`` even though the sketch *is* selected. Trusting the return
+    value made extrude/cut abort on a perfectly good sketch. This helper:
+
+    1. clears the selection and turns off contour-selection mode (a stuck
+       contour mode blocks whole-sketch selection);
+    2. tries ``SelectByID2``, then ``FeatureByName(...).Select2`` as fallback;
+    3. judges success by ``GetSelectedObjectCount2(-1) > 0``, not by the
+       boolean the API returned.
+
+    Returns:
+        ``None`` on success, otherwise a human-readable error string.
+    """
+    model = adapter.currentModel
+    errors: list[str] = []
+
+    try:
+        model.ClearSelection2(True)
+    except Exception:
+        pass
+    try:
+        model.SelectionManager.EnableContourSelection = False
+    except Exception:
+        pass
+
+    try:
+        model.Extension.SelectByID2(
+            sketch_name, "SKETCH", 0.0, 0.0, 0.0, False, 0, _null_callout(), 0
+        )
+    except Exception as exc:  # keep going; fallback below
+        errors.append(f"SelectByID2: {exc}")
+    if _selected_count(adapter) > 0:
+        return None
+
+    try:
+        feat = model.FeatureByName(sketch_name)
+        if feat is not None:
+            feat.Select2(False, 0)
+        else:
+            errors.append("FeatureByName returned None")
+    except Exception as exc:
+        errors.append(f"Select2: {exc}")
+    if _selected_count(adapter) > 0:
+        return None
+
+    detail = f" ({'; '.join(errors)})" if errors else ""
+    return (
+        f"Could not select sketch '{sketch_name}': nothing is selected after "
+        f"SelectByID2 and Feature.Select2{detail}. Check for an open command "
+        "or an active selection filter in SolidWorks."
     )
