@@ -1948,6 +1948,8 @@ class TestPyWin32AdapterBranches:
     )
     async def test_connect_disconnect_and_document_creation_paths(self, monkeypatch):
         """Test COM connect lifecycle plus model creation/open branches with mocks."""
+        # This test drives the opt-in path that may start SolidWorks.
+        monkeypatch.setenv("SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS", "1")
         # The paths are made up; open_model now checks the file exists.
         monkeypatch.setattr(_io_module.os.path, "isfile", lambda _p: True)
         adapter = self._build_adapter(monkeypatch)

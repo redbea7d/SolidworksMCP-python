@@ -13,6 +13,14 @@ class SolidWorksConnectionError(SolidWorksMCPError):
     pass
 
 
+class SolidWorksNotRunningError(SolidWorksConnectionError):
+    """No SolidWorks is running to attach to, and the server won't start one.
+
+    Not a malfunction: the circuit breaker doesn't count it, so the first
+    call after the user starts SolidWorks connects at once.
+    """
+
+
 class SolidWorksOperationError(SolidWorksMCPError):
     """Exception raised when SolidWorks operation fails."""
 

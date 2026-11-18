@@ -31,9 +31,9 @@ Open SolidWorks, restart your client as setup told you, and ask *"What model is 
 
 - `SolidWorks COM interface is available`
 - `Registered 155 SolidWorks tools` (the count grows as tools are added)
-- `Connected to SolidWorks`
+- `Connecting to SolidWorks for the first tool that needs it`
 
-If it says `Could not connect to SolidWorks`, SolidWorks wasn't open when the server started. Open it and restart the server from your client.
+The server never starts SolidWorks itself. If a tool says `SolidWorks is not running`, open SolidWorks and ask again; no restart is needed.
 
 To set a client up by hand instead, every client runs the same command, `uvx solidworks-mcp-python --year 2026`, with your SolidWorks year. `--year` names your installed SolidWorks release and is required for real SolidWorks; setup fills it in for you. It picks which SolidWorks API the lookup tools answer for. Without it, the server logs a warning and uses the newest installed release. The README's [Connect your client](https://github.com/andrewbartels1/SolidworksMCP-python#connect-your-client) section has the config for each.
 

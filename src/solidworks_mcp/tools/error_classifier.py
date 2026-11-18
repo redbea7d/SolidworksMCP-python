@@ -65,8 +65,9 @@ DEFAULT_RULES: tuple[ErrorRule, ...] = (
     ErrorRule(
         error_type="solidworks_unavailable",
         hint=(
-            "SolidWorks is not reachable - it was closed or crashed. Restart "
-            "SolidWorks (and the MCP server if it still fails), then retry."
+            "SolidWorks is not reachable - it is not running, or was closed "
+            "or crashed. Start SolidWorks, then retry; the server connects "
+            "to it on the next call."
         ),
         hresults=frozenset(
             {RPC_E_DISCONNECTED, RPC_S_SERVER_UNAVAILABLE, RPC_S_CALL_FAILED}

@@ -102,6 +102,7 @@ class SolidWorksMCPConfig(BaseModel):
         enable_intelligent_routing (bool): The enable intelligent routing value.
         enable_macro_recording (bool): The enable macro recording value.
         enable_pdm (bool): The enable pdm value.
+        connect_on_startup (bool): Connect to SolidWorks at server start.
         enable_rate_limiting (bool): The enable rate limiting value.
         enable_response_cache (bool): The enable response cache value.
         enable_sql_integration (bool): The enable sql integration value.
@@ -156,6 +157,13 @@ class SolidWorksMCPConfig(BaseModel):
     adapter_type: AdapterType = Field(
         default=AdapterType.PYWIN32,
         description="SolidWorks adapter implementation to use",
+    )
+
+    connect_on_startup: bool = Field(
+        default=False,
+        description="Connect to SolidWorks when the server starts. Off by "
+        "default: the first tool that needs SolidWorks connects instead "
+        "(SOLIDWORKS_MCP_CONNECT_ON_STARTUP).",
     )
 
     enable_windows_validation: bool = Field(

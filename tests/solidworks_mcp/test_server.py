@@ -943,6 +943,7 @@ class TestServerToolEventLogging:
 async def test_start_marks_connected_on_success(mock_config):
     """Covers successful adapter connect branch in start()."""
     server = SolidWorksMCPServer(mock_config)
+    server.config.connect_on_startup = True
     server.config.deployment_mode = DeploymentMode.LOCAL
     server.setup = AsyncMock()
     server._run_local_stdio = AsyncMock()
@@ -957,9 +958,46 @@ async def test_start_marks_connected_on_success(mock_config):
 
 
 @pytest.mark.asyncio
+async def test_start_does_not_connect_by_default(mock_config):
+    """Starting the server leaves SolidWorks alone; the first tool connects."""
+    server = SolidWorksMCPServer(mock_config)
+    assert server.config.connect_on_startup is False
+    server.config.deployment_mode = DeploymentMode.LOCAL
+    server.setup = AsyncMock()
+    server._run_local_stdio = AsyncMock()
+
+    adapter = Mock()
+    adapter.connect = AsyncMock()
+    server.adapter = adapter
+
+    await server.start()
+
+    adapter.connect.assert_not_called()
+    assert server.state.is_connected is False
+    server._run_local_stdio.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("connected", [True, False])
+async def test_health_check_reports_the_adapters_connection(mock_config, connected):
+    """A tool may have connected since start, so health asks the adapter."""
+    server = SolidWorksMCPServer(mock_config)
+    adapter = Mock()
+    adapter.health_check = AsyncMock(return_value=None)
+    adapter.is_connected = Mock(return_value=connected)
+    server.adapter = adapter
+
+    health = await server.health_check()
+
+    assert health["state"]["connected"] is connected
+    assert health["status"] == ("healthy" if connected else "warning")
+
+
+@pytest.mark.asyncio
 async def test_start_logs_mock_fallback_warning_when_connect_fails(mock_config):
     """Covers connect-failure fallback warning branch in non-mock mode."""
     server = SolidWorksMCPServer(mock_config)
+    server.config.connect_on_startup = True
     server.config.deployment_mode = DeploymentMode.LOCAL
     server.config.mock_solidworks = False
     server.setup = AsyncMock()

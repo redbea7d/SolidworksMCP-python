@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -12,8 +13,10 @@ from pydantic import BaseModel, ValidationError
 from solidworks_mcp.adapters.base import AdapterResult, AdapterResultStatus
 from solidworks_mcp.tools.error_classifier import RPC_S_SERVER_UNAVAILABLE
 from solidworks_mcp.tools.modeling import CreateAssemblyInput
+from solidworks_mcp.tools.requirements import Requirement
 from solidworks_mcp.tools.support_levels import Support, SupportLevel
 from solidworks_mcp.tools.tool_boundary import (
+    ConnectionGuard,
     InvalidInputError,
     ToolOperationError,
     ToolRegistrar,
@@ -572,3 +575,175 @@ async def test_a_removed_input_is_refused_before_the_tool_runs() -> None:
         assert "`components` is no longer an input" in result["message"]
     assert kept == {"status": "success"}
     assert len(ran) == 1
+
+
+class _FakeAdapter:
+    """Counts connects and disconnects; ``connect`` yields once, like real I/O."""
+
+    def __init__(self, connect_error: Exception | None = None) -> None:
+        self.connected = False
+        self.connects = 0
+        self.disconnects = 0
+        self.connect_error = connect_error
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    async def connect(self) -> None:
+        self.connects += 1
+        await asyncio.sleep(0)
+        if self.connect_error is not None:
+            raise self.connect_error
+        self.connected = True
+
+    async def disconnect(self) -> None:
+        self.disconnects += 1
+        self.connected = False
+
+
+def _guarded(
+    adapter: _FakeAdapter, requirements: dict[str, Requirement] | None = None
+) -> tuple[FastMCP, list[str]]:
+    """A server with ``body`` (needs SolidWorks running) and ``second`` tools."""
+    mcp = FastMCP("t")
+    ran: list[str] = []
+    registrar = ToolRegistrar(
+        mcp,
+        hints=_TEST_HINTS,
+        levels=_TEST_LEVELS,
+        requirements=requirements or {},
+        guard=ConnectionGuard(adapter),
+    )
+
+    @registrar.tool()
+    async def body(input_data: _Args | None = None) -> dict[str, Any]:
+        ran.append("body")
+        return {"status": "success", "connected": adapter.is_connected()}
+
+    @registrar.tool()
+    async def second() -> dict[str, Any]:
+        ran.append("second")
+        return {"status": "success"}
+
+    return mcp, ran
+
+
+async def _call(mcp: FastMCP, name: str, args: dict[str, Any] | None = None) -> Any:
+    return (await mcp.call_tool(name, args or {})).structured_content
+
+
+@pytest.mark.asyncio
+async def test_a_tool_needing_solidworks_connects_first_and_only_once() -> None:
+    adapter = _FakeAdapter()
+    mcp, ran = _guarded(adapter)
+
+    first = await _call(mcp, "body")
+    again = await _call(mcp, "body")
+
+    assert first == again == {"status": "success", "connected": True}
+    assert adapter.connects == 1
+    assert ran == ["body", "body"]
+
+
+@pytest.mark.asyncio
+async def test_a_tool_not_needing_solidworks_never_connects() -> None:
+    adapter = _FakeAdapter()
+    mcp, ran = _guarded(adapter, {"second": Requirement.NOTHING})
+
+    assert await _call(mcp, "second") == {"status": "success"}
+    assert adapter.connects == 0
+    assert ran == ["second"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_input_is_refused_before_connecting() -> None:
+    adapter = _FakeAdapter()
+    ran: list[str] = []
+
+    async def body(input_data: _Payload) -> dict[str, Any]:
+        ran.append("body")
+        return {"status": "success"}
+
+    wrapped = tool_boundary(body, guard=ConnectionGuard(adapter))
+    result = await wrapped({"depth": "deep"})
+
+    assert result["error_type"] == "invalid_input"
+    assert adapter.connects == 0
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_no_running_solidworks_is_the_tools_error() -> None:
+    from solidworks_mcp.exceptions import SolidWorksNotRunningError
+
+    adapter = _FakeAdapter(
+        SolidWorksNotRunningError("SolidWorks is not running. Start SolidWorks.")
+    )
+    mcp, ran = _guarded(adapter)
+
+    result = await _call(mcp, "body")
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "solidworks_unavailable"
+    assert result["message"] == "SolidWorks is not running. Start SolidWorks."
+    assert "Start SolidWorks" in result["hint"]
+    assert ran == []
+    assert adapter.disconnects == 0  # nothing to drop
+
+    adapter.connect_error = None  # the user starts SolidWorks
+    assert (await _call(mcp, "body"))["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_a_silent_connect_failure_still_says_what_failed() -> None:
+    adapter = _FakeAdapter(RuntimeError())
+    mcp, _ = _guarded(adapter)
+
+    result = await _call(mcp, "body")
+
+    assert result["message"] == "Could not connect to SolidWorks"
+
+
+@pytest.mark.asyncio
+async def test_solidworks_going_away_drops_the_connection_for_a_fresh_one() -> None:
+    adapter = _FakeAdapter()
+    mcp = FastMCP("t")
+    registrar = ToolRegistrar(
+        mcp, hints=_TEST_HINTS, levels=_TEST_LEVELS, guard=ConnectionGuard(adapter)
+    )
+    gone = [True]
+
+    @registrar.tool()
+    async def body() -> dict[str, Any]:
+        if gone[0]:
+            raise ToolOperationError("The RPC server is unavailable.")
+        return {"status": "success"}
+
+    failed = await _call(mcp, "body")
+    gone[0] = False
+    recovered = await _call(mcp, "body")
+
+    assert failed["error_type"] == "solidworks_unavailable"
+    assert recovered == {"status": "success"}
+    assert (adapter.connects, adapter.disconnects) == (2, 1)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_calls_connect_once() -> None:
+    adapter = _FakeAdapter()
+    mcp, ran = _guarded(adapter)
+
+    results = await asyncio.gather(_call(mcp, "body"), _call(mcp, "body"))
+
+    assert all(r["status"] == "success" for r in results)
+    assert adapter.connects == 1
+    assert ran == ["body", "body"]
+
+
+@pytest.mark.asyncio
+async def test_forget_connection_without_a_connection_does_nothing() -> None:
+    adapter = _FakeAdapter()
+
+    await ConnectionGuard(adapter).forget_connection()
+
+    assert adapter.disconnects == 0

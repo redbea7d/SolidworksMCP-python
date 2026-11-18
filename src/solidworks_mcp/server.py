@@ -412,7 +412,12 @@ class SolidWorksMCPServer:
         """
         await self.setup()
 
-        if self.adapter:
+        # By default the first tool that needs SolidWorks connects
+        # (tools/tool_boundary.py ConnectionGuard), so starting the server never
+        # starts or touches SolidWorks.
+        if self.adapter and not self.config.connect_on_startup:
+            logger.info("Not connecting to SolidWorks until a tool needs it")
+        elif self.adapter:
             try:
                 await self.adapter.connect()
                 self.state.is_connected = True
@@ -475,6 +480,8 @@ class SolidWorksMCPServer:
         adapter_health = None
         if self.adapter:
             adapter_health = await self.adapter.health_check()
+            # Tools connect on first use, so ask the adapter, not start().
+            self.state.is_connected = bool(self.adapter.is_connected())
 
         return {
             "status": "healthy" if self.state.is_connected else "warning",

@@ -66,8 +66,8 @@ Use this for docs, tests or mock-mode development; it can't drive SolidWorks.
 Open SolidWorks, then run **MCP: List Servers** and start (or restart) `solidworks`. Its output should include:
 
 - `SolidWorks COM interface is available`
-- `Connected to SolidWorks`
 - `Discovered 155 tools` (the count grows as tools are added)
+- `Connecting to SolidWorks for the first tool that needs it`, once you ask for something that uses SolidWorks
 
 VS Code labels every line the server writes to stderr as `[warning]`. That is the server's normal log, so those labels aren't problems.
 

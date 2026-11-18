@@ -361,6 +361,21 @@ class TestCircuitBreakerCoverage:
         assert cb.failure_count == 1
 
     @pytest.mark.asyncio
+    async def test_solidworks_not_running_is_not_counted(self):
+        """SolidWorks not started yet isn't a malfunction: the breaker stays shut."""
+        from solidworks_mcp.exceptions import SolidWorksNotRunningError
+
+        inner = MockSolidWorksAdapter({})
+        inner.connect = AsyncMock(side_effect=SolidWorksNotRunningError("not running"))
+        cb = CircuitBreakerAdapter(adapter=inner, failure_threshold=2)
+
+        for _ in range(5):
+            with pytest.raises(SolidWorksNotRunningError):
+                await cb.connect()
+        assert cb.failure_count == 0
+        assert cb.state == CircuitState.CLOSED
+
+    @pytest.mark.asyncio
     async def test_health_check_open_sets_unhealthy(self):
         """Lines 196-198 — OPEN state marks health as unhealthy."""
         cb, inner = self._make_cb()
