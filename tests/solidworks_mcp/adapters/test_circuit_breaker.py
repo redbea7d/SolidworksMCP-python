@@ -376,6 +376,16 @@ class TestCircuitBreakerCoverage:
         assert cb.state == CircuitState.CLOSED
 
     @pytest.mark.asyncio
+    async def test_is_alive_follows_the_wrapped_adapter(self):
+        """is_alive asks the wrapped adapter (by default, its connection)."""
+        inner = MockSolidWorksAdapter({})
+        cb = CircuitBreakerAdapter(adapter=inner)
+
+        assert cb.is_alive() is False
+        await inner.connect()
+        assert cb.is_alive() is True
+
+    @pytest.mark.asyncio
     async def test_health_check_open_sets_unhealthy(self):
         """Lines 196-198 — OPEN state marks health as unhealthy."""
         cb, inner = self._make_cb()

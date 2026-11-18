@@ -88,10 +88,13 @@ class ConnectionGuard:
     """Connects to SolidWorks before a tool that needs it runs.
 
     The server does not connect at start (``connect_on_startup``), so the
-    first tool that needs SolidWorks running connects here. A tool that
-    finds SolidWorks gone (``solidworks_unavailable``) drops the connection,
-    so the next tool connects again to a restarted SolidWorks instead of
-    calling the dead one.
+    first tool that needs SolidWorks running connects here. Before every such
+    tool it also asks the adapter whether SolidWorks still answers
+    (``is_alive``): a handle left by a SolidWorks that was closed or crashed
+    is dropped and a fresh connection made, so the tool gets either a working
+    SolidWorks or "SolidWorks is not running" - never an error from calling
+    the dead one. A tool that still finds SolidWorks gone
+    (``solidworks_unavailable``) drops the connection too.
 
     Everything runs on the event-loop thread the tools run on, so the COM
     apartment ``connect()`` sets up is the one every later call uses.
@@ -102,17 +105,18 @@ class ConnectionGuard:
         self._lock = asyncio.Lock()
 
     async def ensure_connected(self) -> None:
-        """Connect unless already connected.
+        """Connect unless connected to a SolidWorks that still answers.
 
         Raises:
             ToolOperationError: When the connection fails, with the reason.
         """
-        if self._adapter.is_connected():
+        if self._adapter.is_alive():
             return
         async with self._lock:
-            if self._adapter.is_connected():
+            if self._adapter.is_alive():
                 return  # another tool connected while this one waited
-            logger.info("Connecting to SolidWorks for the first tool that needs it")
+            await self.forget_connection()
+            logger.info("Connecting to SolidWorks for the tool that needs it")
             try:
                 await self._adapter.connect()
             except Exception as exc:  # any adapter failure becomes the tool's error

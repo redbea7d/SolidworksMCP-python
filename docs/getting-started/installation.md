@@ -61,7 +61,7 @@ Open SolidWorks, restart your client as setup told you, and ask *"What model is 
 - `Registered 135 SolidWorks tools` (the count grows as tools are added)
 - `Listing 135 tools: toolsets all, list mode` (fewer with the settings below)
 - `Not connecting to SolidWorks until a tool needs it`
-- `Connecting to SolidWorks for the first tool that needs it`, when the question reaches its first tool
+- `Connecting to SolidWorks for the tool that needs it`, when the question reaches its first tool
 
 VS Code labels every line the server writes to stderr as `[warning]`. That is where its normal log goes, since stdout carries the MCP messages, so those labels aren't problems.
 
@@ -166,7 +166,7 @@ The server is in mock mode: its entry's `args` include `--mock`. Run setup again
 
 ### A tool says `SolidWorks is not running`
 
-The server attaches to the SolidWorks you started; it never starts one itself. Open SolidWorks and call the tool again: the server connects on that call, with no restart. If you close or restart SolidWorks during a session, the next tool reports that SolidWorks went away and the one after that connects to the new copy.
+The server attaches to the SolidWorks you started; it never starts one itself. Open SolidWorks and call the tool again: the server connects on that call, with no restart. If you close or restart SolidWorks during a session, the next tool notices before it runs: it connects to the new copy, or says SolidWorks is not running if there is none.
 
 ### SolidWorks connection problems
 

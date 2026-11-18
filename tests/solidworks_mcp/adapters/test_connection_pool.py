@@ -1803,6 +1803,19 @@ async def test_connection_pool_forwards_sketch_operations(
     forwarded.assert_awaited_once_with(*args)
 
 
+def test_connection_pool_is_alive_only_when_every_adapter_answers() -> None:
+    """A pool is alive when it is up and no pooled SolidWorks has gone away."""
+    pool = ConnectionPoolAdapter(adapter_factory=lambda: None, pool_size=2)
+    answers = [True, True]
+    pool.pool = [SimpleNamespace(is_alive=lambda i=i: answers[i]) for i in range(2)]
+
+    assert pool.is_alive() is False  # not initialized yet
+    pool.pool_initialized = True
+    assert pool.is_alive() is True
+    answers[1] = False
+    assert pool.is_alive() is False
+
+
 def test_connection_pool_forwards_every_circuit_breaker_passthrough() -> None:
     """Each base method the circuit breaker forwards is forwarded by the pool too."""
     from solidworks_mcp.adapters.base import SolidWorksAdapter
