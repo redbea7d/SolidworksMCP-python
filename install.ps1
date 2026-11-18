@@ -1,89 +1,177 @@
-<#
-.SYNOPSIS
-    Install the SolidWorks MCP server into .venv and connect your MCP clients.
+# text-to-cad's installer for Windows:
+#
+#   irm https://www.texttocad.dev/install.ps1 | iex
+#
+# It finds uv, or installs it with uv's own installer, then runs `cad setup` from the newest
+# release of text-to-cad's server through uvx: text-to-cad set up or updated in every agent app on this machine,
+# with nothing asked. Run it again to update; with --uninstall it runs `cad uninstall` instead.
+# For its options, run it as a script block:
+#
+#   & ([scriptblock]::Create((irm https://www.texttocad.dev/install.ps1))) --help
+#
+# Everything happens inside Install-TextToCad, called on the last line: a download cut short runs
+# nothing, and a failure returns instead of closing the window.
 
-.DESCRIPTION
-    1. Finds Python 3.13 or newer (the py launcher first, then python on the PATH).
-    2. Creates .venv beside this script, if it doesn't exist.
-    3. Installs this project into it (with uv if it's on the PATH, else pip).
-    4. Runs `solidworks-mcp setup`, which finds SolidWorks and your MCP clients
-       and adds the server to the ones you choose.
+function Install-TextToCad {
+    $ErrorActionPreference = 'Stop'
+    # The release this script was published with, installed when the version feed cannot be read.
+    $CadVersion = "0.11.11"
+    # The first release whose `cad uninstall` asks before it destroys, and takes --yes for an answer.
+    $ConsentSince = '0.11.0'
+    $VersionFeed = 'https://api.texttocad.dev/v1/versions'
+    $Releases = 'https://github.com/earthtojake/text-to-cad/releases/download'
 
-    Any arguments are passed to `solidworks-mcp setup`, for example:
-        .\install.ps1 --dry-run
-        .\install.ps1 --client claude-desktop --yes
+    function Show-Usage {
+        Write-Host "text-to-cad's installer: installs or updates text-to-cad in every agent app on this machine. It"
+        Write-Host 'prints its plan and carries it out, asking nothing; --dry-run prints the plan alone.'
+        Write-Host ''
+        Write-Host '  irm https://www.texttocad.dev/install.ps1 | iex'
+        Write-Host '  & ([scriptblock]::Create((irm https://www.texttocad.dev/install.ps1))) --dry-run'
+        Write-Host ''
+        Write-Host 'Options (all but --version, --from and --uninstall go to `cad setup`, or to `cad uninstall`):'
+        Write-Host '  --dry-run          print the plan and stop: nothing is changed'
+        Write-Host '  --only APP[,APP]   only these apps: claude, claude-desktop, codex, cursor, grok, gemini, or'
+        Write-Host '                     the agents the skills go to through the Skills CLI (cad setup --help)'
+        Write-Host '  --uninstall        take text-to-cad out again: runs cad uninstall (with --purge, its state and caches too)'
+        Write-Host '  --no-telemetry     turn telemetry off'
+        Write-Host "  --version X.Y.Z    install that release (default: the newest, from $VersionFeed,"
+        Write-Host "                     never older than this script's own, $CadVersion)"
+        Write-Host '  --from SPEC        run the server from SPEC instead: a wheel, a folder or a requirement'
+        Write-Host '                     (also the CAD_INSTALL_FROM variable); for testing a build before its release,'
+        Write-Host '                     with UV_FIND_LINKS naming the folder of the library''s wheel beside it'
+        Write-Host ''
+        Write-Host "uv comes from its own installer when it is missing; UV_NO_MODIFY_PATH=1 keeps it from editing"
+        Write-Host 'your PATH. To read this script before running it, or to keep to one release, take the copy'
+        Write-Host "attached to that release and check it against the release's SHA256SUMS:"
+        Write-Host ''
+        Write-Host "  irm $Releases/v$CadVersion/install.ps1 -OutFile install.ps1"
+        Write-Host "  irm $Releases/v$CadVersion/SHA256SUMS"
+        Write-Host '  (Get-FileHash install.ps1 -Algorithm SHA256).Hash'
+        Write-Host '  powershell -ExecutionPolicy ByPass -File install.ps1'
+        Write-Host ''
+        Write-Host 'On macOS and Linux: curl -fsSL https://texttocad.dev/install.sh | sh'
+    }
 
-.NOTES
-    If scripts are blocked, run it once with:
-        powershell -ExecutionPolicy Bypass -File .\install.ps1
-#>
-$ErrorActionPreference = "Stop"
-Set-Location -LiteralPath $PSScriptRoot
+    # uvx: on PATH, else where uv's installer puts it before a new shell has it on PATH.
+    function Find-Uvx {
+        $command = Get-Command uvx -ErrorAction SilentlyContinue
+        if ($command) { return $command.Source }
+        $folders = @($env:UV_INSTALL_DIR)
+        if ($env:UV_INSTALL_DIR) { $folders += (Join-Path $env:UV_INSTALL_DIR 'bin') }
+        $folders += @($env:XDG_BIN_HOME, (Join-Path $HOME '.local\bin'), (Join-Path $HOME '.cargo\bin'))
+        foreach ($folder in $folders) {
+            if ($folder -and (Test-Path (Join-Path $folder 'uvx.exe'))) { return (Join-Path $folder 'uvx.exe') }
+        }
+        return $null
+    }
 
-function Find-Python {
-    # The py launcher can pick a version even when python on the PATH is older.
-    $candidates = @(
-        @{ Exe = "py"; Args = @("-3.13") },
-        @{ Exe = "py"; Args = @("-3") },
-        @{ Exe = "python"; Args = @() }
-    )
-    foreach ($candidate in $candidates) {
-        if (-not (Get-Command $candidate.Exe -ErrorAction SilentlyContinue)) { continue }
-        $version = & $candidate.Exe @($candidate.Args) -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
-        if ($LASTEXITCODE -eq 0 -and [version]$version -ge [version]"3.13") {
-            return $candidate
+    # Whether release $a is older than $b: the dotted numbers compared, a suffix ignored; never when
+    # either is no version. The feed lags a release by up to an hour, and this script never installs
+    # a release older than the one it was published with: that one has no `cad setup`.
+    function Test-Older($a, $b) {
+        try {
+            return ([version]($a -replace '[^0-9.].*$', '')) -lt ([version]($b -replace '[^0-9.].*$', ''))
+        } catch {
+            return $false
         }
     }
-    throw "Python 3.13 or newer was not found. Install it from https://www.python.org/downloads/ and run this script again."
-}
 
-$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $venvPython)) {
-    $python = Find-Python
-    Write-Host "Creating .venv with $($python.Exe) $($python.Args)..."
-    & $python.Exe @($python.Args) -m venv .venv
-    if ($LASTEXITCODE -ne 0) { throw "Creating .venv failed." }
-}
-
-$venvDir = Join-Path $PSScriptRoot ".venv"
-$launcher = Join-Path $venvDir "Scripts\solidworks-mcp.exe"
-
-function Get-VenvProcesses {
-    # Programs running from .venv, e.g. the server an MCP client started.
-    # Windows locks a running .exe, so an install that replaces it fails
-    # partway and leaves packages half-removed.
-    Get-Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.StartsWith($venvDir, [StringComparison]::OrdinalIgnoreCase) }
-}
-
-$running = @(Get-VenvProcesses)
-$installed = $false
-if (Test-Path $launcher) {
-    & $venvPython -c "import solidworks_mcp" 2>$null
-    $installed = $LASTEXITCODE -eq 0
-}
-
-if ($running -and $installed) {
-    # The install is editable, so code changes are already live; only a
-    # dependency change needs a reinstall, and that has to wait.
-    $names = ($running | ForEach-Object { "$($_.ProcessName) ($($_.Id))" }) -join ", "
-    Write-Host "The server is already installed and running ($names), so the install step is skipped."
-    Write-Host "To update dependencies, quit your MCP clients (e.g. Claude Desktop from the tray) and run this script again."
-} elseif ($running) {
-    $names = ($running | ForEach-Object { "$($_.ProcessName) ($($_.Id))" }) -join ", "
-    throw "Programs are running from .venv ($names). Quit them (your MCP clients start them) and run this script again."
-} else {
-    Write-Host "Installing the SolidWorks MCP server into .venv..."
-    if (Get-Command uv -ErrorAction SilentlyContinue) {
-        # uv is faster, and pip can't upgrade packages that uv installed.
-        uv pip install --quiet --python $venvPython -e .
-    } else {
-        & $venvPython -m pip install --quiet --upgrade pip
-        & $venvPython -m pip install --quiet -e .
+    # --version picks the release, --from a build outright and --uninstall the verb; every other
+    # argument goes to it, in order.
+    $version = $null
+    $from = $null
+    $verb = 'setup'
+    $rest = @()
+    for ($index = 0; $index -lt $args.Count; $index++) {
+        $argument = [string]$args[$index]
+        if ($argument -eq '-h' -or $argument -eq '--help') { Show-Usage; return }
+        if ($argument -eq '--version') {
+            if ($index + 1 -ge $args.Count) {
+                Write-Host "error: --version needs a release, as in --version $CadVersion" -ForegroundColor Red
+                return
+            }
+            $index++
+            $version = [string]$args[$index]
+            continue
+        }
+        if ($argument.StartsWith('--version=')) { $version = $argument.Substring(10); continue }
+        if ($argument -eq '--from') {
+            if ($index + 1 -ge $args.Count) {
+                Write-Host "error: --from needs a wheel, a folder or a requirement" -ForegroundColor Red
+                return
+            }
+            $index++
+            $from = [string]$args[$index]
+            continue
+        }
+        if ($argument.StartsWith('--from=')) { $from = $argument.Substring(7); continue }
+        if ($argument -eq '--uninstall') { $verb = 'uninstall'; continue }
+        $rest += $argument
     }
-    if ($LASTEXITCODE -ne 0) { throw "Installing the package failed; see the output above." }
+
+    if (-not $from -and $env:CAD_INSTALL_FROM) { $from = $env:CAD_INSTALL_FROM }
+    if ($from) {
+        # A build named outright (a wheel, a folder, a requirement): uvx takes it as it is, nothing refreshed.
+        $requirement = $from
+        $refresh = @()
+        $version = $from
+        $origin = 'as --from asked'
+    } else {
+        if ($version) {
+            $origin = 'as --version asked'
+        } else {
+            # An older Windows PowerShell may not offer TLS 1.2 on its own.
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            try {
+                $version = [string](Invoke-RestMethod -Uri $VersionFeed -TimeoutSec 3).latest
+            } catch {
+                $version = $null
+            }
+            if (-not $version) {
+                $version = $CadVersion
+                $origin = "this script's own: the version feed could not be read"
+            } elseif (Test-Older $version $CadVersion) {
+                $origin = "this script's own: the version feed still names $version"
+                $version = $CadVersion
+            } else {
+                $origin = 'the newest release'
+            }
+        }
+        if ($version -notmatch '^[0-9][0-9A-Za-z.+-]*$') {
+            Write-Host "error: not a release: $version" -ForegroundColor Red
+            return
+        }
+        $requirement = "cad-server==$version"
+        # The server, and the library it pins at its own release: uv reads both anew from the index.
+        $refresh = @('--refresh-package', 'cad-server', '--refresh-package', 'cad')
+    }
+
+    $uvx = Find-Uvx
+    if (-not $uvx) {
+        Write-Host "uv is not installed: installing it with uv's own installer (https://docs.astral.sh/uv/):"
+        Write-Host '  irm https://astral.sh/uv/install.ps1 | iex'
+        $shell = (Get-Process -Id $PID).Path
+        & $shell -NoProfile -ExecutionPolicy ByPass -Command 'irm https://astral.sh/uv/install.ps1 | iex'
+        $uvx = Find-Uvx
+        if (-not $uvx) {
+            Write-Host 'error: uv was installed, but uvx was not found: open a new terminal and run this again' -ForegroundColor Red
+            return
+        }
+    }
+    # uvx's folder on PATH: `cad setup` writes uvx's absolute path into the apps' configs.
+    $env:Path = "$(Split-Path $uvx);$env:Path"
+
+    # --uninstall is the person's own word: `cad uninstall` is told yes for them (it would ask at a terminal),
+    # but a release from before it asked, which takes no --yes. A build named outright is taken as this one.
+    if ($verb -eq 'uninstall' -and ($from -or -not (Test-Older $version $ConsentSince))) { $rest += '--yes' }
+    # cad asks nothing here: every other argument goes to it as given.
+    $arguments = @('--no-config', '--managed-python', '--python', '3.14') + $refresh + @('--from', $requirement, 'cad', $verb) + $rest
+    Write-Host "text-to-cad: $version ($origin). The first run downloads it, which takes a minute."
+    Write-Host "Running: $uvx $($arguments -join ' ')"
+    & $uvx @arguments
+    if ($LASTEXITCODE) {
+        Write-Host "cad $verb exited $LASTEXITCODE; what it said is above." -ForegroundColor Red
+    }
 }
 
-# Hand over to the guided setup; it asks before changing any client config.
-& $launcher setup @args
-exit $LASTEXITCODE
+Install-TextToCad @args
