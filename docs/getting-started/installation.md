@@ -60,7 +60,8 @@ Open SolidWorks, restart your client as setup told you, and ask *"What model is 
 - `SolidWorks COM interface is available`
 - `Registered 135 SolidWorks tools` (the count grows as tools are added)
 - `Listing 135 tools: toolsets all, list mode` (fewer with the settings below)
-- `Connected to SolidWorks`
+- `Not connecting to SolidWorks until a tool needs it`
+- `Connecting to SolidWorks for the first tool that needs it`, when the question reaches its first tool
 
 VS Code labels every line the server writes to stderr as `[warning]`. That is where its normal log goes, since stdout carries the MCP messages, so those labels aren't problems.
 
@@ -108,6 +109,15 @@ Set them in the `env` of the client's `solidworks` entry. For Claude Desktop or 
 
 For Claude Code: `claude mcp add solidworks --scope user -e SOLIDWORKS_MCP_TOOL_MODE=search -- <command>`. A name that isn't a toolset, or a mode other than `list` or `search`, stops the server at start with a message listing the valid values, rather than quietly hiding tools. `selftest` reports how many tools your settings list.
 
+## 5. When the server connects to SolidWorks
+
+Starting the client starts the server, but not SolidWorks. The server connects the first time a tool needs SolidWorks running, and only to a SolidWorks you already opened. Tools that need nothing from a running SolidWorks (the VBA generators, the API help lookups, comparing files) never connect. Two settings change this, in the same `env` block:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SOLIDWORKS_MCP_CONNECT_ON_STARTUP` | `false` | Connect when the server starts instead of at the first tool. Starting the server without SolidWorks running then logs `Could not connect to SolidWorks`, and the first tool tries again. |
+| `SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS` | `false` | Let the server start SolidWorks when none is running. Off, a tool reports `SolidWorks is not running` instead. |
+
 ## Install from source
 
 To work on the server itself, install it from a clone. You need [Python 3.13+](https://www.python.org/downloads/windows/), installed with **Add python.exe to PATH** ticked, and Git.
@@ -154,13 +164,13 @@ If an install was interrupted anyway and the server now fails with an `ImportErr
 
 The server is in mock mode: its entry's `args` include `--mock`. Run setup again without `--mock`.
 
-### `Could not connect to SolidWorks` in the log
+### A tool says `SolidWorks is not running`
 
-SolidWorks wasn't running when the client started the server. Open SolidWorks, then restart the server from the client (for example **MCP: List Servers > solidworks > Restart** in VS Code). Despite the next log line, "Continuing with mock adapter for testing", the server does not switch to mock mode; its tools fail until it is restarted with SolidWorks open.
+The server attaches to the SolidWorks you started; it never starts one itself. Open SolidWorks and call the tool again: the server connects on that call, with no restart. If you close or restart SolidWorks during a session, the next tool reports that SolidWorks went away and the one after that connects to the new copy.
 
 ### SolidWorks connection problems
 
-- Open SolidWorks before the client starts the server.
+- Open SolidWorks before asking for anything that uses it.
 - Run on Windows, not WSL.
 - Check COM: `.\.venv\Scripts\python.exe -c "import win32com.client; print('win32com OK')"`.
 - The [troubleshooting runbook](https://github.com/andrewbartels1/SolidworksMCP-python/blob/main/CLAUDE.md#troubleshooting-runbook) covers COM errors in detail.

@@ -18,6 +18,7 @@ tool, a ``warning`` to its successful results.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import time
@@ -77,6 +78,55 @@ class ToolOperationError(Exception):
 
 class UnsupportedOperationError(Exception):
     """The active adapter has no capability for the requested operation."""
+
+
+#: The error type that means SolidWorks went away (closed or crashed).
+SOLIDWORKS_UNAVAILABLE = "solidworks_unavailable"
+
+
+class ConnectionGuard:
+    """Connects to SolidWorks before a tool that needs it runs.
+
+    The server does not connect at start (``connect_on_startup``), so the
+    first tool that needs SolidWorks running connects here. A tool that
+    finds SolidWorks gone (``solidworks_unavailable``) drops the connection,
+    so the next tool connects again to a restarted SolidWorks instead of
+    calling the dead one.
+
+    Everything runs on the event-loop thread the tools run on, so the COM
+    apartment ``connect()`` sets up is the one every later call uses.
+    """
+
+    def __init__(self, adapter: Any) -> None:
+        self._adapter = adapter
+        self._lock = asyncio.Lock()
+
+    async def ensure_connected(self) -> None:
+        """Connect unless already connected.
+
+        Raises:
+            ToolOperationError: When the connection fails, with the reason.
+        """
+        if self._adapter.is_connected():
+            return
+        async with self._lock:
+            if self._adapter.is_connected():
+                return  # another tool connected while this one waited
+            logger.info("Connecting to SolidWorks for the first tool that needs it")
+            try:
+                await self._adapter.connect()
+            except Exception as exc:  # any adapter failure becomes the tool's error
+                # The adapter's message already names the connection failure.
+                raise ToolOperationError(
+                    str(exc) or "Could not connect to SolidWorks"
+                ) from exc
+
+    async def forget_connection(self) -> None:
+        """Drop the connection to a SolidWorks that has gone away."""
+        if not self._adapter.is_connected():
+            return
+        logger.warning("SolidWorks went away; reconnecting on the next tool call")
+        await self._adapter.disconnect()
 
 
 def require_capability(adapter: Any, method: str, message: str) -> None:
@@ -217,6 +267,7 @@ def tool_boundary(
     fn: Callable[..., Awaitable[dict[str, Any]]],
     classifier: ErrorClassifier = _CLASSIFIER,
     warning: str | None = None,
+    guard: ConnectionGuard | None = None,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """Wrap an async tool so every failure becomes an error payload.
 
@@ -229,6 +280,9 @@ def tool_boundary(
         warning: Added as ``warning`` to every successful result (a beta or
             experimental tool's level), after any warning of the tool's own;
             errors carry a ``hint`` instead.
+        guard: For a tool that needs SolidWorks running: connects after the
+            input is validated and before the tool runs, and drops the
+            connection when the tool finds SolidWorks gone.
 
     A dict passed where the tool expects its input model is validated as
     that model first, so a script can call any tool function with a dict, as
@@ -256,8 +310,7 @@ def tool_boundary(
                 raise InvalidInputError("; ".join(removed))
         return bound
 
-    @functools.wraps(fn)
-    async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def run(*args: Any, **kwargs: Any) -> dict[str, Any]:
         started = time.perf_counter()
 
         def elapsed() -> float:
@@ -265,6 +318,8 @@ def tool_boundary(
 
         try:
             bound = with_models(args, kwargs)
+            if guard is not None:
+                await guard.ensure_connected()
             result = await fn(*bound.args, **bound.kwargs)
         except InvalidInputError as exc:
             return error_payload(
@@ -306,6 +361,13 @@ def tool_boundary(
             return {**result, "warning": f"{own} {warning}" if own else warning}
         return result
 
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        payload = await run(*args, **kwargs)
+        if guard is not None and payload.get("error_type") == SOLIDWORKS_UNAVAILABLE:
+            await guard.forget_connection()
+        return payload
+
     wrapper.__tool_boundary__ = True  # type: ignore[attr-defined]
     return wrapper
 
@@ -334,8 +396,10 @@ class ToolRegistrar:
     table, its family tag (see :func:`tool_family`), and its support level
     from the levels table: a ``level:<level>`` tag and, below stable, a
     ``warning`` on success. A ``needs:<requirement>`` tag says what it needs
-    from SolidWorks (``tools/requirements.py``). Everything else is
-    forwarded to the wrapped server unchanged.
+    from SolidWorks (``tools/requirements.py``); given a
+    :class:`ConnectionGuard`, each tool that needs SolidWorks running
+    connects first. Everything else is forwarded to the wrapped server
+    unchanged.
     """
 
     def __init__(
@@ -345,12 +409,14 @@ class ToolRegistrar:
         hints: Mapping[str, ToolHints] = TOOL_HINTS,
         levels: Mapping[str, Support] = SUPPORT_LEVELS,
         requirements: Mapping[str, Requirement] = REQUIREMENTS,
+        guard: ConnectionGuard | None = None,
     ) -> None:
         self._mcp = mcp
         self._classifier = classifier
         self._hints = hints
         self._levels = levels
         self._requirements = requirements
+        self._guard = guard
 
     def _support(self, name: str) -> Support:
         """The support entry of a tool being registered.
@@ -410,8 +476,18 @@ class ToolRegistrar:
         return merged
 
     def _wrap(self, fn: Callable[..., Awaitable[dict[str, Any]]], name: str) -> Any:
-        """The tool inside the boundary, with its level's success warning."""
-        return tool_boundary(fn, self._classifier, self._support(name).warning())
+        """The tool inside the boundary, with its level's success warning.
+
+        A tool that needs SolidWorks running also gets the connection guard;
+        one that needs only SolidWorks' files, or nothing, never connects.
+        """
+        needs_running = requirement_of(name, self._requirements) is Requirement.RUNNING
+        return tool_boundary(
+            fn,
+            self._classifier,
+            self._support(name).warning(),
+            self._guard if needs_running else None,
+        )
 
     @classmethod
     def of(cls, mcp: Any) -> ToolRegistrar:

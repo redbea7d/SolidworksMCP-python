@@ -13,6 +13,7 @@ from typing import Any, TypeVar, cast
 
 from loguru import logger
 
+from ..exceptions import SolidWorksNotRunningError
 from .base import (
     AdapterHealth,
     AdapterResult,
@@ -397,6 +398,10 @@ class CircuitBreakerAdapter(SolidWorksAdapter):
         try:
             await self.adapter.connect()
             self._record_success()
+        except SolidWorksNotRunningError:
+            # Not a malfunction: SolidWorks just isn't started yet. Counting
+            # it would pause connecting after a few tries, even once it is.
+            raise
         except Exception:
             self._record_failure()
             raise

@@ -15,7 +15,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, TypeVar
 
-from ..exceptions import InputRefused, SolidWorksMCPError
+from ..exceptions import InputRefused, SolidWorksMCPError, SolidWorksNotRunningError
 from . import sw_type_info
 from .base import (
     AdapterHealth,
@@ -156,6 +156,30 @@ def _headless_requested() -> bool:
         "yes",
         "on",
     }
+
+
+def _launch_requested() -> bool:
+    """True when ``SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS`` lets connect start SolidWorks.
+
+    Off by default - ``connect()`` only attaches to a SolidWorks the user
+    already started, and fails with a clear message when none is running.
+    Starting SolidWorks from the server (COM ``Dispatch``) makes a copy the
+    user didn't ask for, and from a process outside the desktop session a
+    hidden one nobody can see or close.
+    """
+    return os.getenv("SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+#: The connect failure when no SolidWorks is running to attach to.
+SOLIDWORKS_NOT_RUNNING = (
+    "SolidWorks is not running. Start SolidWorks, then call the tool again "
+    "(or set SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS=1 to let the server start it)."
+)
 
 
 # Operations that open, create, close or switch documents. SolidWorks rebuilds
@@ -331,12 +355,15 @@ class _ComSessionCoordinator:
         self._adapter._com_thread_id = None
 
     async def acquire_solidworks_application(self) -> Any:
-        """Acquire a live SolidWorks COM application object with retries.
+        """Acquire a live SolidWorks COM application object.
 
-        Attempts up to 8 connect-cycles.  Each cycle first tries
-        ``win32com.client.GetActiveObject("SldWorks.Application")`` to bind to
-        a running instance, then falls back to
-        ``win32com.client.Dispatch("SldWorks.Application")`` to start one.
+        By default this only attaches to a running SolidWorks with
+        ``win32com.client.GetActiveObject("SldWorks.Application")``, once,
+        and fails at once when none is running.
+
+        With ``SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS`` set it attempts up to 8
+        connect-cycles.  Each cycle first tries ``GetActiveObject``, then
+        falls back to ``Dispatch("SldWorks.Application")`` to start one.
         Between cycles the coroutine sleeps 1 second so that a slow
         SolidWorks launch has time to register its COM class.
 
@@ -344,14 +371,17 @@ class _ComSessionCoordinator:
             Any: The live ``SldWorks.Application`` COM object.
 
         Raises:
-            SolidWorksMCPError: After all retries are exhausted, wraps the
-                last ``pywintypes.com_error`` or raises a generic message
-                when the returned object is ``None``.
+            SolidWorksMCPError: When no SolidWorks is running to attach to
+                (attach-only), or after all retries are exhausted, wrapping
+                the last ``pywintypes.com_error`` or a generic message when
+                the returned object is ``None``.
 
         Side Effects:
             Sets ``adapter.swApp`` to the acquired COM object.
         """
         self._adapter.swApp = None
+        if not _launch_requested():
+            return self._attach_to_running_solidworks()
         last_error: Exception | None = None
         # Force late binding (dynamic.Dispatch) — the gen_py wrapper provides
         # method-name lookup for flag_methods but early-bound dispatches
@@ -379,6 +409,26 @@ class _ComSessionCoordinator:
         if last_error is not None:
             raise SolidWorksMCPError(str(last_error))
         raise SolidWorksMCPError("SolidWorks COM application instance is None")
+
+    def _attach_to_running_solidworks(self) -> Any:
+        """Attach to the SolidWorks the user started; never start one.
+
+        Returns:
+            Any: The live ``SldWorks.Application`` COM object.
+
+        Raises:
+            SolidWorksNotRunningError: ``SOLIDWORKS_NOT_RUNNING`` when no
+                SolidWorks is registered as running.
+        """
+        try:
+            raw = win32com.client.GetActiveObject("SldWorks.Application")
+        except pywintypes.com_error as exc:
+            raise SolidWorksNotRunningError(SOLIDWORKS_NOT_RUNNING) from exc
+        if raw is None:
+            raise SolidWorksNotRunningError(SOLIDWORKS_NOT_RUNNING)
+        app = _dynamic_dispatch(raw)
+        self._adapter.swApp = app
+        return app
 
     async def wait_for_server_ready(self, app: Any) -> None:
         """Poll until the SolidWorks COM server is responsive.
@@ -467,7 +517,8 @@ class _ComSessionCoordinator:
         ``None``, COM apartment uninitialised) before re-raising.
 
         Raises:
-            SolidWorksMCPError: Wraps any underlying COM or timeout error.
+            SolidWorksNotRunningError: No SolidWorks is running to attach to.
+            SolidWorksMCPError: Wraps any other COM or timeout error.
         """
         try:
             self.initialize_com_apartment()
@@ -478,6 +529,9 @@ class _ComSessionCoordinator:
             await self.wait_for_server_ready(app)
             app.Visible = not _headless_requested()
             self.set_automation_preferences(app, interactive=False)
+        except SolidWorksNotRunningError:
+            self.uninitialize_com_apartment()
+            raise  # its message already says what to do
         except Exception as exc:
             self._adapter.swApp = None
             self.uninitialize_com_apartment()

@@ -545,6 +545,8 @@ class TestPyWin32AdapterBranches:
         self, monkeypatch
     ) -> None:
         """connect should raise when COM returns None instead of an app instance."""
+        # This test drives the opt-in path that may start SolidWorks.
+        monkeypatch.setenv("SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS", "1")
         adapter = self._build_adapter(monkeypatch)
 
         monkeypatch.setattr(
@@ -586,6 +588,8 @@ class TestPyWin32AdapterBranches:
         self, monkeypatch
     ) -> None:
         """Coordinator should skip duplicate init and raise last COM error after retries."""
+        # This test drives the opt-in path that may start SolidWorks.
+        monkeypatch.setenv("SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS", "1")
         adapter = self._build_adapter(monkeypatch)
 
         co_init = Mock()
@@ -1082,3 +1086,99 @@ class TestComThreadAffinity:
         result = adapter._handle_com_operation("noop", lambda: 1)
 
         assert result.is_success
+
+
+class TestAttachOnly:
+    """By default connect attaches to a running SolidWorks and never starts one."""
+
+    @staticmethod
+    def _adapter(monkeypatch, get_active: Mock) -> tuple[PyWin32Adapter, Mock]:
+        """An adapter whose COM layer has ``get_active`` and a watched Dispatch."""
+        monkeypatch.delenv("SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS", raising=False)
+        adapter = TestPyWin32AdapterAdditionalCoverage._build_adapter(monkeypatch)
+        monkeypatch.setattr(
+            "solidworks_mcp.adapters.pywin32_adapter.pythoncom",
+            SimpleNamespace(CoInitialize=Mock(), CoUninitialize=Mock()),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "solidworks_mcp.adapters.pywin32_adapter.win32com",
+            SimpleNamespace(client=SimpleNamespace(GetActiveObject=get_active)),
+            raising=False,
+        )
+        launch = Mock(side_effect=AssertionError("must not start SolidWorks"))
+        monkeypatch.setattr(
+            "solidworks_mcp.adapters.pywin32_adapter._dynamic_module",
+            SimpleNamespace(Dispatch=launch),
+            raising=False,
+        )
+        return adapter, launch
+
+    @pytest.mark.asyncio
+    async def test_attaches_to_the_running_solidworks(self, monkeypatch) -> None:
+        raw = object()
+        adapter, launch = self._adapter(monkeypatch, Mock(return_value=raw))
+        app = SimpleNamespace()
+        launch.side_effect = None
+        launch.return_value = app  # late-binds the running instance only
+
+        assert await adapter._acquire_solidworks_application() is app
+        assert adapter.swApp is app
+        launch.assert_called_once_with(raw)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "get_active",
+        [
+            Mock(side_effect=RuntimeError("Operation unavailable")),
+            Mock(return_value=None),
+        ],
+        ids=["com_error", "none"],
+    )
+    async def test_no_running_solidworks_fails_at_once(
+        self, monkeypatch, get_active: Mock
+    ) -> None:
+        from solidworks_mcp.exceptions import SolidWorksNotRunningError
+
+        adapter, launch = self._adapter(monkeypatch, get_active)
+        sleep = AsyncMock()
+        monkeypatch.setattr(
+            "solidworks_mcp.adapters.pywin32_adapter.asyncio.sleep", sleep
+        )
+
+        with pytest.raises(SolidWorksNotRunningError, match="Start SolidWorks"):
+            await adapter.connect()
+
+        launch.assert_not_called()
+        sleep.assert_not_called()  # no retry loop when nothing is running
+        get_active.assert_called_once()
+        assert adapter.swApp is None
+        assert adapter._com_initialized is False  # apartment released
+
+    @pytest.mark.asyncio
+    async def test_launch_mode_still_prefers_the_running_solidworks(
+        self, monkeypatch
+    ) -> None:
+        raw = object()
+        adapter, dispatch = self._adapter(monkeypatch, Mock(return_value=raw))
+        monkeypatch.setenv("SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS", "1")
+        app = SimpleNamespace()
+        dispatch.side_effect = None
+        dispatch.return_value = app
+
+        assert await adapter._acquire_solidworks_application() is app
+        dispatch.assert_called_once_with(raw)  # never Dispatch("SldWorks...")
+
+    @pytest.mark.parametrize(
+        ("value", "launch"),
+        [(None, False), ("", False), ("0", False), ("1", True), (" Yes ", True)],
+    )
+    def test_launch_is_opt_in(self, monkeypatch, value, launch) -> None:
+        from solidworks_mcp.adapters.pywin32_adapter import _launch_requested
+
+        if value is None:
+            monkeypatch.delenv("SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS", raising=False)
+        else:
+            monkeypatch.setenv("SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS", value)
+
+        assert _launch_requested() is launch

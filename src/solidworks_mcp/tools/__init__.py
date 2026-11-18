@@ -3,7 +3,7 @@
 This module provides all the MCP tools for SolidWorks automation, organized by category.
 """
 
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import FastMCP
 from loguru import logger
@@ -22,6 +22,7 @@ from .modeling import register_modeling_tools
 from .server_admin import register_server_admin_tools
 from .sketching import register_sketching_tools
 from .template_management import register_template_management_tools
+from .tool_boundary import ConnectionGuard, ToolRegistrar
 from .vba_generation import register_vba_generation_tools
 
 
@@ -37,6 +38,11 @@ async def register_tools(mcp: FastMCP, adapter: Any, config: Any) -> int:
         int: The computed numeric result.
     """
     logger.info("Registering SolidWorks MCP tools...")
+
+    # One registrar for every module (each module's ``ToolRegistrar.of`` keeps
+    # it), so each tool that needs SolidWorks running connects before it runs.
+    registrar = ToolRegistrar(mcp, guard=ConnectionGuard(adapter))
+    mcp = cast(FastMCP, registrar)
 
     # Register tool categories
     await register_modeling_tools(mcp, adapter, config)
