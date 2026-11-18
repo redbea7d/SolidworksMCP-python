@@ -24,12 +24,21 @@ step. Values are examples; sizes are millimetres.
    `solid_body_count: 1`, `feature_count: 3`, and a `volume_mm3` with a
    `relative_tolerance` wide enough for the fillets.
 10. `set_material` (find the exact name with `list_available_materials`),
-    then `save_part` with a `file_path` ending in `.sldprt`.
+    then `save_file` with a `file_path` ending in `.sldprt`. To choose the
+    material by strength or stiffness, compare candidates first with
+    `get_material` and `material`: it reads the yield strength and the
+    elastic modulus, in Pa, without assigning anything.
 
 ## Sketching somewhere other than the three planes
 
-`create_reference_plane` with `reference: "Top Plane"` and `offset: 10` makes
-a plane 10 mm up; its name (e.g. "Plane1") goes into `create_sketch`.
+On a flat face of the body: `create_sketch` with `face_point`, a point on the
+face in mm (e.g. `[0, 20, 0]` on the top of a 20 mm tall block). The sketch
+sits on the face, so a cut made from it follows the face when a dimension
+changes later. Prefer this to a plane at the same height.
+
+Away from the body: `create_reference_plane` with `reference: "Top Plane"`
+and `offset: 10` makes a plane 10 mm up; its name (e.g. "Plane1") goes into
+`create_sketch`.
 
 - At an angle: `create_axis` first (its reply names the axis, e.g. "Axis1"),
   then `reference`, `angle` (degrees) and `axis`.
@@ -60,8 +69,45 @@ plane; the reply's `end_condition` says `MidPlane`.
    centre is always the sketch origin.
 3. `exit_sketch`, then one `create_cut_extrude`.
 
-Don't use `pattern_circular` on a cut: it reports an error unless the
-volume grows.
+A cut or a `create_hole` hole that already exists can be repeated instead:
+`create_axis` with `reference: "y"` (an axis through the origin), then
+`pattern_circular` with the feature's name, the axis and `count`.
+
+## Standard holes, threads, shells and ribs
+
+- **A hole for a screw:** `create_hole` with a point on the face where the
+  hole's centre goes, the `hole_type` and a size from `list_hole_sizes`
+  (`M6`, `#10`; on a simple hole `M6` is a clearance hole, `6` a drilled
+  one). An unknown size is refused with the nearest ones. More holes on the same face go in
+  `positions` (points in mm): one feature, a hole at each point. A
+  regular row or grid can also use `pattern_linear`. A simple hole can't
+  be through all in SolidWorks: it is made blind through the part, and the
+  reply says so.
+- **A thread on a shaft or a plain hole:** make the round feature first,
+  then `add_cosmetic_thread` with a point on its circular edge. Tapped
+  holes already carry their thread.
+- **A box or a housing:** model the solid, then `create_shell` with a
+  point on the face to open. Add stiffeners with `create_rib`: sketch an
+  open line where the rib goes, close the sketch, pass its name.
+- **Moulded walls:** `add_draft` with a point on each wall and on the face
+  the draft pivots on.
+- **Following an existing edge:** in an open sketch, `sketch_convert_entities`
+  copies edges (or a face's outline) exactly; cut or extrude from that
+  sketch instead of re-drawing the edge at guessed coordinates.
+
+## Sheet metal (a bracket, a cover)
+
+1. `create_part`, `create_sketch` on a plane, `add_rectangle` (or an open
+   line or L for a bent profile), `exit_sketch`.
+2. `create_base_flange` with `thickness`, `bend_radius` and `k_factor`
+   (`depth` for an open profile).
+3. `add_edge_flange` with a point on the edge and a `length` measured from
+   that edge.
+4. For a bend across a face: `create_sketch` with `face_point`, `add_line`,
+   `exit_sketch`, then `create_sketched_bend`. SolidWorks keeps one side
+   fixed; read the reply's box to see which.
+5. `set_flat_pattern` with `flat: true` gives the blank's size; check it,
+   `export_flat_pattern` for the DXF, then `flat: false` to fold it back.
 
 ## Changing an existing model
 
@@ -74,9 +120,28 @@ volume grows.
 To turn a feature off without deleting it, `suppress_feature`. After
 `delete_feature`, call `list_features`: dependents may have gone too.
 
+## Variants of one part (configurations)
+
+1. `create_configuration` with a name (`Long`); the active one doesn't change.
+2. `set_dimension` or `suppress_feature` with `configurations: ["Long"]`
+   changes only `Long`; `"all"` changes every one. Without it, only the
+   active configuration changes.
+3. `activate_configuration` to look at a variant; `get_dimension` reads the
+   active one.
+
+## Starting every part the same way (a template)
+
+1. `create_part`, then set it up: `set_units`, `set_material`,
+   `set_custom_property` (company, drawn by). Add no features if only the
+   settings should carry over.
+2. `save_as_template` with a `name` (it goes in SolidWorks' template folder
+   and shows in File > New) or a `file_path` ending in `.prtdot`.
+3. `create_part` with `template` set to the reply's `file_path`: the new part
+   starts with those units, material and properties.
+
 ## An assembly
 
-1. Save each part first (`save_part`): `insert_component` takes a file path.
+1. Save each part first (`save_file`): `insert_component` takes a file path.
 2. `create_assembly`, then `insert_component` for each part, with a
    position in mm.
 3. `list_components` for the instance names (e.g. "plate-1").
@@ -90,7 +155,7 @@ To turn a feature off without deleting it, `suppress_feature`. After
    mates move in the main assembly (a crank that turns), `flexible: true`.
 5. `check_interference`, then `verify_model` with `component_count`,
    `mate_count` and `no_interference: true`.
-6. `save_assembly`, or `pack_and_go_assembly` for a self-contained folder.
+6. `save_file`, or `pack_and_go_assembly` for a self-contained folder.
 
 ## A drawing
 
@@ -104,7 +169,15 @@ Step by step instead:
 2. `insert_model_dimensions`, then `arrange_dimensions` (it reports any
    overlap it couldn't clear; `set_sheet_scale` gives more room).
 3. `auto_center_marks`, `add_note`, and for an assembly `insert_bom_table`.
-4. `save_file` with a `.slddrw` path, and `export_pdf`.
+4. `check_drawing`, then fix what it finds.
+5. `save_file` with a `.slddrw` path, and `export_pdf`.
+
+Finishing a drawing: `create_section_view` (a line across a view, in sheet
+mm) and `create_detail_view` (a circle in a view, at a scale) add views;
+`add_dimension` picks edges by sheet points and replies with the value;
+`update_title_block` changes the revision and other fields;
+`update_sheet_format` moves to a bigger sheet, keeping the views. Read the
+views' outlines from `check_drawing` to work out the points.
 
 ## Exporting
 

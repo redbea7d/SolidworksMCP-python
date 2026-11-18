@@ -7,13 +7,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://www.microsoft.com/windows)
 [![SolidWorks](https://img.shields.io/badge/SolidWorks-2019--2025-red)](https://www.solidworks.com/)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-0A66C2)](https://andrewbartels1.github.io/SolidworksMCP-python/)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-0A66C2)](https://andrewbartels1.com/SolidworksMCP-python/)
 [![Tests](https://github.com/andrewbartels1/SolidworksMCP-python/actions/workflows/ci.yml/badge.svg)](https://github.com/andrewbartels1/SolidworksMCP-python/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/andrewbartels1/SolidworksMCP-python/branch/main/graph/badge.svg)](https://codecov.io/gh/andrewbartels1/SolidworksMCP-python)
 
-**AI-Assisted SolidWorks Automation with MCP**
+An MCP server that lets AI agents drive SolidWorks: describe a part, and the agent builds it with the server's 123 tools and checks what SolidWorks reports back.
 
-🚀 **152 Tools** | 🤖 **Agent-Ready Workflows** | ⚡ **Automatic COM/VBA Routing** | 🧪 **Schema-Validated Prompt Runs**
+🚀 **139 Tools** | 🤖 **Agent-Ready Workflows** | ⚡ **Automatic COM/VBA Routing** | 🧪 **Schema-Validated Prompt Runs**
 
 ## Overview
 
@@ -43,7 +43,7 @@ The project emphasizes an inspect -> classify -> delegate loop instead of blind 
 
 ### 2) Broad Tool Surface with Practical Coverage
 
-- 152 tools across modeling, sketching, drawing, engineering data, analysis, export, automation, templates, macros, and docs discovery
+- 139 tools across modeling, sketching, drawing, engineering data, analysis, export, automation, templates, macros, and docs discovery
 - one server API surface for both simple operations and advanced workflows
 
 ### 3) Reliable Execution Path for Complex Operations
@@ -190,7 +190,7 @@ Ready to automate your SolidWorks workflows? Check out our comprehensive guides:
 - [**VS Code MCP Setup**](getting-started/vscode-mcp-setup.md) - Connect VS Code and GitHub Copilot to this server
 - [**Claude Code MCP Setup**](getting-started/claude-code-setup.md) - Connect Claude Code to this server
 - [**Architecture Overview**](user-guide/architecture.md) - Understand the system design
-- [**Tools Overview**](user-guide/tools-overview.md) - Explore all 109 available tools
+- [**Tools Overview**](user-guide/tools-overview.md) - Explore all 123 tools
 - [**Agent UI Workflows**](agents/agent-ui-workflows.md) - Plan visual decision workflows for hinges, sourcing, and printability
 - [**Agent Memory and Recovery**](agents/agent-memory-and-recovery.md) - Use local SQLite history to troubleshoot and recover from failure states
 

@@ -17,11 +17,12 @@ from ..utils.feature_tree_classifier import (
     build_component_tree,
     classify_feature_tree_snapshot,
 )
+from ..utils.sw_dependencies import dependency_paths
 from .input_compat import CompatInput
 from .tool_boundary import (
     InvalidInputError,
     ToolOperationError,
-    UnsupportedOperationError,
+    normalize_input,
     require_capability,
     require_success,
     with_tool_boundary,
@@ -34,13 +35,93 @@ class SaveFileInput(CompatInput):
     """Input schema for saving a file.
 
     Attributes:
-        file_path (str | None): The file path value.
+        file_path (str | None): A new path to save to; None saves in place.
+        overwrite (bool): Whether a file already at ``file_path`` may be replaced.
     """
 
     file_path: str | None = Field(
         default=None,
-        description="Optional output path. If omitted, saves the current active document.",
+        description=(
+            "Optional new path, ending in the active document's extension "
+            "(.sldprt, .sldasm or .slddrw). If omitted, saves the active document "
+            "to its own path."
+        ),
     )
+    overwrite: bool = Field(
+        default=False,
+        description="Replace a file already at file_path. Off by default.",
+    )
+
+
+#: The file extension each document type saves to.
+_DOC_EXTENSIONS = {"Part": ".sldprt", "Assembly": ".sldasm", "Drawing": ".slddrw"}
+
+#: Characters Windows doesn't allow in a file name.
+_RESERVED_NAME_CHARACTERS = frozenset('\\/:*?"<>|')
+
+
+class SaveAsTemplateInput(CompatInput):
+    """Input schema for saving the active document as a template.
+
+    Attributes:
+        file_path (str | None): The template's full path.
+        name (str | None): A file name for SolidWorks' template folder.
+        overwrite (bool): Whether an existing template may be replaced.
+    """
+
+    file_path: str | None = Field(
+        default=None,
+        description="The template's full path, ending in .prtdot (part), .asmdot "
+        "(assembly) or .drwdot (drawing). Give this or `name`",
+    )
+    name: str | None = Field(
+        default=None,
+        description="A name, e.g. 'Bracket MMGS': saved with the right extension "
+        "in SolidWorks' first template folder, so it shows in File > New. Give "
+        "this or `file_path`",
+    )
+    overwrite: bool = Field(
+        default=False, description="Replace a template already there. Off by default."
+    )
+
+    def model_post_init(self, __context: Any) -> None:
+        """Exactly one of ``file_path`` and ``name``; a name is a plain file name.
+
+        Raises:
+            ValueError: When both or neither are given, or the name has a path
+                separator or a character Windows doesn't allow.
+        """
+        if (self.file_path is None) == (self.name is None):
+            raise ValueError("give either file_path or name, not both or neither")
+        if self.name is not None:
+            self.name = self.name.strip()
+            bad = sorted(set(self.name) & _RESERVED_NAME_CHARACTERS)
+            if not self.name or bad:
+                raise ValueError(
+                    "name is a file name with no folder and none of "
+                    f"{' '.join(sorted(_RESERVED_NAME_CHARACTERS))} (got {self.name!r})"
+                )
+
+
+def file_details(raw_path: str) -> dict[str, Any]:
+    """The size and times of the file at ``raw_path``, read from the disk.
+
+    Args:
+        raw_path: The document's path; empty for a document never saved.
+
+    Returns:
+        dict[str, Any]: ``size_bytes``, ``created`` and ``modified`` (Unix
+        timestamps); each None when no file is there.
+    """
+    path = Path(raw_path) if raw_path else None
+    if path is None or not path.is_file():
+        return {"size_bytes": None, "created": None, "modified": None}
+    stat = path.stat()
+    return {
+        "size_bytes": stat.st_size,
+        "created": stat.st_ctime,
+        "modified": stat.st_mtime,
+    }
 
 
 class SaveAsInput(CompatInput):
@@ -57,66 +138,6 @@ class SaveAsInput(CompatInput):
         default="solidworks", description="File format (solidworks, step, iges, etc.)"
     )
     overwrite: bool = Field(default=False, description="Overwrite existing file")
-
-
-class FileOperationInput(CompatInput):
-    """Input schema for file operations.
-
-    Attributes:
-        file_path (str | None): The file path value.
-        include_system (bool): The include system value.
-        operation (str): The operation value.
-        parameters (dict[str, Any] | None): The parameters value.
-        properties (dict[str, Any] | None): The properties value.
-        source_path (str | None): The source path value.
-        target_path (str | None): The target path value.
-    """
-
-    operation: str = Field(
-        description="Operation to perform (copy, move, delete, rename)"
-    )
-    source_path: str | None = Field(default=None, description="Source file path")
-    file_path: str | None = Field(default=None, description="Alternative file path")
-    target_path: str | None = Field(
-        default=None, description="Target file path (for copy/move/rename)"
-    )
-    properties: dict[str, Any] | None = Field(
-        default=None, description="File properties to set"
-    )
-    parameters: dict[str, Any] | None = Field(
-        default=None, description="Operation parameters"
-    )
-    include_system: bool = Field(default=False, description="Include system properties")
-
-
-class FormatConversionInput(CompatInput):
-    """Input schema for format conversion.
-
-    Attributes:
-        conversion_options (dict[str, Any] | None): The conversion options value.
-        invalid_format (str | None): The invalid format value.
-        output_path (str | None): The output path value.
-        quality (str): The quality value.
-        source_file (str): The source file value.
-        source_format (str | None): The source format value.
-        target_file (str | None): The target file value.
-        target_format (str): The target format value.
-        units (str): The units value.
-    """
-
-    source_file: str = Field(description="Source file path")
-    target_file: str | None = Field(default=None, description="Target file path")
-    source_format: str | None = Field(default=None, description="Source file format")
-    target_format: str = Field(description="Target file format")
-    output_path: str | None = Field(default=None, description="Alternative output path")
-    conversion_options: dict[str, Any] | None = Field(
-        default=None, description="Conversion options"
-    )
-    quality: str = Field(default="high", description="Conversion quality")
-    units: str = Field(default="mm", description="Units")
-    invalid_format: str | None = Field(
-        default=None, description="Invalid format for testing"
-    )
 
 
 class LoadPartInput(CompatInput):
@@ -188,12 +209,15 @@ class PackAndGoInput(CompatInput):
         description="Directory where the assembly and all referenced parts will be copied"
     )
     export_preview: bool = Field(
-        default=True,
+        default=False,
         description="Export an isometric PNG preview next to the copied files",
     )
     overwrite: bool = Field(
         default=False,
-        description="Overwrite files that already exist in target_dir",
+        description=(
+            "Pack into a target_dir that already holds files, replacing the ones "
+            "Pack and Go writes; other files there are kept"
+        ),
     )
 
 
@@ -285,6 +309,45 @@ class SaveBodyAsPartInput(CompatInput):
             raise ValueError("file_path is required")
 
 
+class CreateConfigurationInput(CompatInput):
+    """Input schema for adding a configuration.
+
+    Attributes:
+        name (str): The new configuration's name.
+        parent (str | None): A configuration to derive it from.
+        description (str): Its description.
+        activate (bool): Leave it active.
+    """
+
+    name: str = Field(description="The new configuration's name, e.g. 'Long'")
+    parent: str | None = Field(
+        default=None, description="A configuration to derive it from (a child)"
+    )
+    description: str = Field(default="", description="Its description")
+    activate: bool = Field(
+        default=False,
+        description="Leave it active; otherwise the current one stays active",
+    )
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.name.strip():
+            raise ValueError("name is required")
+
+
+class ConfigurationNameInput(CompatInput):
+    """Input schema naming one configuration.
+
+    Attributes:
+        name (str): The configuration's name.
+    """
+
+    name: str = Field(description="The configuration's name, e.g. 'Default'")
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.name.strip():
+            raise ValueError("name is required")
+
+
 async def register_file_management_tools(
     mcp: FastMCP, adapter: SolidWorksAdapter, config: dict[str, Any]
 ) -> int:
@@ -364,6 +427,7 @@ async def register_file_management_tools(
         *,
         required_extension: str,
         overwrite: bool,
+        refuse_wrong_extension: bool = False,
     ) -> str:
         """Normalize and validate a save target before adapter/COM calls.
 
@@ -377,6 +441,8 @@ async def register_file_management_tools(
             required_extension (str): Required extension for the target document type
                 (for example, ``.sldprt`` or ``.sldasm``).
             overwrite (bool): Whether saving is allowed to replace an existing file.
+            refuse_wrong_extension (bool): Refuse a path with another extension
+                instead of changing it to ``required_extension``.
 
         Returns:
             str: The normalized save path.
@@ -421,6 +487,11 @@ async def register_file_management_tools(
 
         target = Path(file_path)
         if target.suffix.lower() != required_extension.lower():
+            if refuse_wrong_extension:
+                raise InvalidInputError(
+                    f"file_path must end in {required_extension} for the active "
+                    f"document; got {target.name!r}. Nothing was saved."
+                )
             # Normalize extension so save_part/save_assembly always use their canonical type.
             target = target.with_suffix(required_extension)
 
@@ -448,6 +519,41 @@ async def register_file_management_tools(
 
         return str(target)
 
+    async def _checked_new_path(raw_path: str, *, overwrite: bool) -> str:
+        """Check a new save path against the active document's type.
+
+        Args:
+            raw_path: The path the caller gave.
+            overwrite: Whether a file already there may be replaced.
+
+        Returns:
+            str: The path to save to.
+
+        Raises:
+            ToolOperationError: If the active document's type can't be read.
+            InvalidInputError: If the path fails a check (see
+                ``_prepare_save_target``).
+        """
+        info = await adapter.get_model_info()
+        doc_type = (
+            info.data.get("type")
+            if info.is_success and isinstance(info.data, dict)
+            else None
+        )
+        extension = _DOC_EXTENSIONS.get(str(doc_type))
+        if extension is None:
+            raise ToolOperationError(
+                "Could not tell the active document's type "
+                f"({info.error or doc_type!r}), so file_path was not checked and "
+                "nothing was saved."
+            )
+        return _prepare_save_target(
+            raw_path,
+            required_extension=extension,
+            overwrite=overwrite,
+            refuse_wrong_extension=True,
+        )
+
     def _get_attr_or_call(obj: Any, name: str, default: Any = None) -> Any:
         """Read COM values that may be exposed as either properties or methods."""
         candidate = getattr(obj, name, None)
@@ -460,22 +566,6 @@ async def register_file_management_tools(
                 return default
             return default if value is None else value
         return candidate
-
-    def _extract_dependency_paths(
-        raw_dependencies: Any,
-    ) -> list[Path]:
-        """Extract model file paths from SolidWorks GetDependencies2 payloads."""
-        if not isinstance(raw_dependencies, (list, tuple)):
-            return []
-
-        dependency_paths: list[Path] = []
-        for item in raw_dependencies:
-            if not isinstance(item, str):
-                continue
-            lower_item = item.lower()
-            if lower_item.endswith((".sldprt", ".sldasm", ".slddrw")):
-                dependency_paths.append(Path(item))
-        return dependency_paths
 
     def _copy_with_collision_handling(source_path: Path, target_dir: Path) -> Path:
         """Copy a source file into target_dir, suffixing when name collisions occur."""
@@ -537,9 +627,8 @@ async def register_file_management_tools(
                 f"Failed to enumerate assembly dependencies: {exc}"
             ) from exc
 
-        dependency_paths = _extract_dependency_paths(raw_dependencies)
         unique_sources: list[Path] = [source_assembly]
-        for dep in dependency_paths:
+        for dep in dependency_paths(raw_dependencies):
             if dep not in unique_sources:
                 unique_sources.append(dep)
 
@@ -571,18 +660,20 @@ async def register_file_management_tools(
 
     @mcp.tool()
     async def save_file(input_data: SaveFileInput) -> dict[str, Any]:
-        """Save the active document, to its own path or to a new path in its own format.
+        """Save the active part, assembly or drawing, to its own path or to a new path in its own format.
 
-        Use it after changes you want to keep. For a part or an assembly with checks on
-        the target path (folder exists, no accidental overwrite), use `save_part` or
-        `save_assembly`; to write another format, use `save_as` or an `export_*` tool.
+        Use it after changes you want to keep. A new `file_path` is checked before
+        SolidWorks is asked: its folder must exist and be writable, it must end in
+        the document's extension (.sldprt, .sldasm, .slddrw), and a file already there
+        is kept unless `overwrite` is on. To write another format, use `save_as` or an
+        `export_*` tool; to copy an assembly with its parts, `pack_and_go_assembly`.
         Needs: an open, active document, already saved once unless you give a path.
-        Changes: writes the file; a different file at `file_path` is replaced. Returns:
-        `data` from the save (usually empty).
+        Changes: writes the file. Returns: `file_path` (when given) and `data` from
+        the save.
 
         Args:
             input_data: The save. Nothing is required: give `file_path` to save to a
-                new path, or omit it to save in place.
+                new path, or omit it to save in place; `overwrite` is off.
 
         Returns:
             dict[str, Any]: The save result.
@@ -593,11 +684,15 @@ async def register_file_management_tools(
             "save_file",
             "Active adapter does not support save_file; the file was not saved.",
         )
-        result = await adapter.save_file(input_data.file_path)
+        target = input_data.file_path
+        if target is not None:
+            target = await _checked_new_path(target, overwrite=input_data.overwrite)
+        result = await adapter.save_file(target)
         require_success(result, "Failed to save file")
         return {
             "status": "success",
             "message": "File saved successfully",
+            **({"file_path": target} if target is not None else {}),
             "data": result.data,
             "execution_time": result.execution_time,
         }
@@ -662,6 +757,88 @@ async def register_file_management_tools(
         }
 
     @mcp.tool()
+    async def save_as_template(input_data: SaveAsTemplateInput) -> dict[str, Any]:
+        """Save the active part, assembly or drawing as a template, so new documents start from it.
+
+        Use it after setting up a document once (units with `set_units`, a material,
+        custom properties) to start the next one the same way: pass the template to
+        `create_part`, `create_assembly` or `create_drawing` as `template`. A part
+        saves as .prtdot, an assembly as .asmdot, a drawing as .drwdot. Give
+        `file_path`, or `name` to save in SolidWorks' first template folder so it also
+        shows in File > New. Afterwards SolidWorks has the template open in place of
+        the document, as File > Save As does (a saved document's file is left as last
+        saved); the reply's `warning` says so. Save from a part with no features when only its settings should carry
+        over. The path is checked before SolidWorks is asked: the extension must
+        match, the folder must exist, and a file already there is kept unless
+        `overwrite` is on. Needs: an open, active document. Changes: writes the
+        template. Returns: `data` with `file_path`, `document_type`,
+        `in_template_folder`, `template_folders` and `document_became_template`.
+
+        Args:
+            input_data: `file_path` or `name` (one is required); `overwrite` is off.
+
+        Returns:
+            dict[str, Any]: The template written.
+        """
+        input_data = _coerce_input(SaveAsTemplateInput, input_data)
+        require_capability(
+            adapter,
+            "save_as_template",
+            "Active adapter does not support save_as_template; nothing was saved.",
+        )
+        found = await adapter.get_template_folders()
+        require_success(found, "Failed to read SolidWorks' template folders")
+        extension = (found.data or {}).get("extension")
+        if extension is None:
+            raise ToolOperationError(
+                "No active model: open or create the document to save as a template."
+            )
+        raw = input_data.file_path
+        if input_data.name is not None:
+            folders = (found.data or {}).get("folders") or []
+            if not folders:
+                raise InvalidInputError(
+                    "SolidWorks lists no document template folder (Options > File "
+                    "Locations > Document Templates); give file_path instead."
+                )
+            stem = input_data.name
+            if stem.lower().endswith(extension):
+                stem = stem[: -len(extension)]
+            raw = os.path.join(folders[0], stem + extension)
+        target = _prepare_save_target(
+            str(raw),
+            required_extension=extension,
+            overwrite=input_data.overwrite,
+            refuse_wrong_extension=True,
+        )
+        result = await adapter.save_as_template(target)
+        require_success(result, "Failed to save the template")
+        data = result.data or {}
+        reply: dict[str, Any] = {
+            "status": "success",
+            "message": f"Saved the {data.get('document_type', 'document')} template "
+            f"{target}; start a new one from it with template: {target!r}",
+            "file_path": target,
+            "data": data,
+            "execution_time": result.execution_time,
+        }
+        if data.get("document_became_template"):
+            original = data.get("document_path")
+            kept = (
+                f"{original} is unchanged on disk, as last saved."
+                if original
+                else "The document had never been saved, so it now exists only "
+                "as this template."
+            )
+            reply["warning"] = (
+                f"SolidWorks now has the template {target} open in place of the "
+                f"document, as File > Save As does, so save_file would change the "
+                f"template. {kept} Start the next part with create_part and this "
+                "template."
+            )
+        return reply
+
+    @mcp.tool()
     async def get_file_properties() -> dict[str, Any]:
         """Report the active document's file details: name, path, size, dates, type, configuration and unsaved changes.
 
@@ -700,15 +877,14 @@ async def register_file_management_tools(
             "feature_count": model_info.get("feature_count"),
         }
 
-        if file_path is not None and file_path.is_file():
-            stat = file_path.stat()
-            properties.update(
-                {
-                    "file_size_bytes": stat.st_size,
-                    "created_date": stat.st_ctime,
-                    "modified_date": stat.st_mtime,
-                }
-            )
+        details = file_details(raw_path)
+        properties.update(
+            {
+                "file_size_bytes": details["size_bytes"],
+                "created_date": details["created"],
+                "modified_date": details["modified"],
+            }
+        )
 
         return {
             "status": "success",
@@ -718,23 +894,26 @@ async def register_file_management_tools(
 
     @mcp.tool()
     async def get_model_info() -> dict[str, Any]:
-        """Report the active document's title, path, type, active configuration, unsaved changes, feature count and rebuild status.
+        """Report the active document's title, path, type, configuration, unsaved changes, feature count, rebuild status and file details.
 
         Use it first in a session, to see which document is active (it follows a switch
-        made in the SolidWorks window). For file size and dates, use
-        `get_file_properties`; for every open document, use `list_open_documents`.
-        Needs: an open document. Read-only. Returns: `model_info` with `title`, `path`,
-        `type`, `configuration`, `is_dirty`, `feature_count` and `rebuild_status` (0
-        rebuilt, 1 needs a rebuild).
+        made in the SolidWorks window). For every open document, use
+        `list_open_documents`; for custom properties, `get_custom_properties`. Needs: an
+        open document. Read-only. Returns: `model_info` with `title`, `path`, `type`,
+        `configuration`, `is_dirty`, `feature_count`, `rebuild_status` (0 rebuilt, 1
+        needs a rebuild), and the file's `size_bytes`, `created` and `modified` (Unix
+        timestamps; null for a document never saved).
         """
         require_capability(
             adapter, "get_model_info", "Active adapter does not support get_model_info"
         )
         result = await adapter.get_model_info()
         require_success(result, "Failed to get model info")
+        info = dict(result.data or {})
+        info.update(file_details(str(info.get("path") or "")))
         return {
             "status": "success",
-            "model_info": result.data,
+            "model_info": info,
             "execution_time": result.execution_time,
         }
 
@@ -829,31 +1008,35 @@ async def register_file_management_tools(
         features = input_data.features
         execution_time = 0.0
 
-        if model_info is None and hasattr(adapter, "get_model_info"):
+        # Reading the model can fail (nothing open); classifying an empty
+        # model instead would give a confident wrong answer.
+        if model_info is None:
+            require_capability(
+                adapter,
+                "get_model_info",
+                "Active adapter does not support get_model_info",
+            )
             model_result = await adapter.get_model_info()
-            if model_result.is_success:
-                model_info = model_result.data
-                execution_time = max(execution_time, model_result.execution_time or 0.0)
+            require_success(
+                model_result, context="Failed to read the model to classify"
+            )
+            model_info = model_result.data
+            execution_time = max(execution_time, model_result.execution_time or 0.0)
 
         if features is None:
-            if hasattr(adapter, "list_features"):
-                feature_result = await adapter.list_features(
-                    include_suppressed=input_data.include_suppressed
-                )
-                if feature_result.is_success:
-                    features = feature_result.data or []
-                    execution_time = max(
-                        execution_time, feature_result.execution_time or 0.0
-                    )
-                else:
-                    raise ToolOperationError(
-                        feature_result.error
-                        or "Failed to list features for classification"
-                    )
-            else:
-                raise UnsupportedOperationError(
-                    "Active adapter does not support list_features"
-                )
+            require_capability(
+                adapter,
+                "list_features",
+                "Active adapter does not support list_features",
+            )
+            feature_result = await adapter.list_features(
+                include_suppressed=input_data.include_suppressed
+            )
+            require_success(
+                feature_result, context="Failed to list features to classify"
+            )
+            features = feature_result.data or []
+            execution_time = max(execution_time, feature_result.execution_time or 0.0)
 
         classification = classify_feature_tree_snapshot(model_info, features or [])  # type: ignore[arg-type]
         return {
@@ -866,11 +1049,12 @@ async def register_file_management_tools(
 
     @mcp.tool()
     async def list_configurations() -> dict[str, Any]:
-        """List the names of the active model's configurations.
+        """List the names of the active model's configurations, and which one is active.
 
-        Use it to see which configurations a part or assembly has. Needs: an open part
-        or assembly. Read-only. Returns: `configurations` (names) and `count`.
-        `get_model_info` says which one is active.
+        Use it to see which configurations a part or assembly has before
+        `activate_configuration` or `delete_configuration`. Needs: an open part or
+        assembly. Read-only. Returns: `configurations` (names), `count` and
+        `active` (null when it can't be read).
         """
         require_capability(
             adapter,
@@ -879,110 +1063,15 @@ async def register_file_management_tools(
         )
         result = await adapter.list_configurations()
         require_success(result, "Failed to list configurations")
+        active: str | None = None
+        if callable(getattr(adapter, "active_configuration", None)):
+            read = await adapter.active_configuration()
+            active = read.data if read.is_success else None
         return {
             "status": "success",
             "configurations": result.data or [],
             "count": len(result.data or []),
-            "execution_time": result.execution_time,
-        }
-
-    @mcp.tool()
-    async def manage_file_properties(input_data: FileOperationInput) -> dict[str, Any]:
-        """Read or change the file-level properties of a SolidWorks file on disk.
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. To read or
-        set custom properties on the active model today, use `get_custom_properties` and
-        `set_custom_property`. Changes: once available, the file's properties. Returns:
-        once available, the properties under `data`.
-
-        Args:
-            input_data: The operation. `operation` is required; `file_path` or
-                `source_path`, `properties` and `include_system` have defaults.
-
-        Returns:
-            dict[str, Any]: The properties, or a `not_supported` error.
-        """
-        input_data = _coerce_input(FileOperationInput, input_data)
-        require_capability(
-            adapter,
-            "manage_file_properties",
-            "Active adapter does not support manage_file_properties; "
-            f"no {input_data.operation} operation was performed.",
-        )
-        result = await adapter.manage_file_properties(input_data.model_dump())
-        require_success(result, "Failed to manage file properties")
-        return {
-            "status": "success",
-            "message": "File properties managed successfully",
-            "data": result.data,
-            "execution_time": result.execution_time,
-        }
-
-    @mcp.tool()
-    async def convert_file_format(input_data: FormatConversionInput) -> dict[str, Any]:
-        """Convert a SolidWorks file on disk to another format without opening it first.
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. Today, open
-        the file with `open_model` and use `save_as` or an `export_*` tool such as
-        `export_step`. Changes: once available, writes the converted file. Returns: once
-        available, the converted file under `data`.
-
-        Args:
-            input_data: The conversion. `source_file` and `target_format` are
-                required; `target_file`, `quality` and `units` have defaults.
-
-        Returns:
-            dict[str, Any]: The conversion, or a `not_supported` error.
-        """
-        input_data = _coerce_input(FormatConversionInput, input_data)
-        require_capability(
-            adapter,
-            "convert_file_format",
-            "Active adapter does not support convert_file_format; "
-            f"{input_data.source_file} was not converted.",
-        )
-        result = await adapter.convert_file_format(input_data.model_dump())
-        require_success(result, "Failed to convert file format")
-        return {
-            "status": "success",
-            "message": "File converted successfully",
-            "data": result.data,
-            "execution_time": result.execution_time,
-        }
-
-    @mcp.tool()
-    async def batch_file_operations(input_data: FileOperationInput) -> dict[str, Any]:
-        """Copy, move, rename or delete SolidWorks files on disk in one call.
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. To copy an
-        assembly with every part it uses, use `pack_and_go_assembly`. Changes: once
-        available, copies, moves, renames or deletes files. Returns: once available, a
-        per-file result under `data`.
-
-        Args:
-            input_data: The operation. `operation` (copy, move, delete or rename) is
-                required; `source_path`, `target_path` and `parameters` have
-                defaults.
-
-        Returns:
-            dict[str, Any]: The results, or a `not_supported` error.
-        """
-        input_data = _coerce_input(FileOperationInput, input_data)
-        require_capability(
-            adapter,
-            "batch_file_operations",
-            "Active adapter does not support batch_file_operations; "
-            f"no {input_data.operation} batch operation was performed.",
-        )
-        result = await adapter.batch_file_operations(input_data.model_dump())
-        require_success(result, "Failed to run batch file operations")
-        return {
-            "status": "success",
-            "message": "Batch file operations completed successfully",
-            "data": result.data,
+            "active": active,
             "execution_time": result.execution_time,
         }
 
@@ -994,7 +1083,8 @@ async def register_file_management_tools(
         `open_model`, and to switch to a document that is already open, use
         `activate_document`. A path that isn't a .sldprt is refused. Needs: the file on
         disk. Changes: opens the part (no file is written). Returns: `model` with
-        `name`, `type`, `path` and `configuration`.
+        `name`, `type`, `path` and `configuration` (the one SolidWorks opened, or
+        null when it can't be read).
 
         Args:
             input_data: The part. `file_path` (a .sldprt) is required.
@@ -1013,7 +1103,7 @@ async def register_file_management_tools(
         model = result.data
         title = _result_value(model, "title", "name", default=file_path)
         path = _result_value(model, "path", "file_path", default=file_path)
-        configuration = _result_value(model, "configuration", default="Default")
+        configuration = _result_value(model, "configuration")
         return {
             "status": "success",
             "message": f"Loaded part: {title}",
@@ -1034,7 +1124,8 @@ async def register_file_management_tools(
         `open_model`, and to switch to a document that is already open, use
         `activate_document`. A path that isn't a .sldasm is refused. Needs: the file on
         disk. Changes: opens the assembly (no file is written). Returns: `model` with
-        `name`, `type`, `path` and `configuration`.
+        `name`, `type`, `path` and `configuration` (the one SolidWorks opened, or
+        null when it can't be read).
 
         Args:
             input_data: The assembly. `file_path` (a .sldasm) is required.
@@ -1055,7 +1146,7 @@ async def register_file_management_tools(
         model = result.data
         title = _result_value(model, "title", "name", default=file_path)
         path = _result_value(model, "path", "file_path", default=file_path)
-        configuration = _result_value(model, "configuration", default="Default")
+        configuration = _result_value(model, "configuration")
         return {
             "status": "success",
             "message": f"Loaded assembly: {title}",
@@ -1074,8 +1165,7 @@ async def register_file_management_tools(
 
         Before writing to a new path it checks the folder exists and is writable,
         changes the extension to .sldprt, and refuses an existing file unless
-        `overwrite` is on. For an assembly, use `save_assembly`; for other formats, use
-        `save_as` or an `export_*` tool. Needs: an open, active part. Changes: writes
+        `overwrite` is on. For other formats, use `save_as` or an `export_*` tool. Needs: an open, active part. Changes: writes
         the part file. Returns: `file_path` when saved to a new path.
 
         Args:
@@ -1126,8 +1216,8 @@ async def register_file_management_tools(
         changes the extension to .sldasm, and refuses an existing file unless
         `overwrite` is on. With `include_references`, it instead copies the assembly
         file as last saved, and the files it references, into the new folder; unsaved
-        changes are left out and references are not updated. For a self-contained copy,
-        use `pack_and_go_assembly`. Needs: an open, active assembly, saved once for
+        changes are left out and references are not updated. To copy an assembly with
+        its referenced parts, use `pack_and_go_assembly`. Needs: an open, active assembly, saved once for
         `include_references`. Changes: writes the assembly file (and copies). Returns:
         `file_path`, plus `copied_files` and `missing_source_files` when copying
         references.
@@ -1175,16 +1265,20 @@ async def register_file_management_tools(
             }
 
     @mcp.tool()
-    async def pack_and_go_assembly(
-        input_data: PackAndGoInput | None = None,
-    ) -> dict[str, Any]:
-        """Copy an assembly and every part it references into one folder, with the references updated (SolidWorks Pack and Go).
+    async def pack_and_go_assembly(input_data: PackAndGoInput) -> dict[str, Any]:
+        """Copy an assembly and every file it uses into one folder that opens on its own.
 
-        Use it to hand over or archive an assembly as a self-contained folder. It
-        refuses a folder that already has files unless `overwrite` is on, and can add an
+        Use it to hand over or archive an assembly. SolidWorks lists the files the
+        assembly uses; each is copied under its own name, as saved on disk, so save
+        first: a `warning` names any open file whose unsaved changes the copy doesn't
+        have. The copy opens with its own parts, since SolidWorks looks in the
+        assembly's folder first. It fails, copying nothing, when a file is missing,
+        two files share a name, or `target_dir` holds the originals. It refuses a
+        folder that already has files unless `overwrite` is on, and then replaces only
+        the files it copies. It never closes or changes a document. It can add an
         isometric PNG preview. Needs: the .sldasm on disk. Changes: writes the copies
         into `target_dir`, creating it if needed. Returns: `source_assembly`,
-        `target_dir`, `copied_files`, `source_files`, `all_files_saved` and, with a
+        `target_dir`, `copied_files`, `source_files`, `unsaved_changes` and, with a
         preview, `preview_image`.
 
         Args:
@@ -1194,10 +1288,7 @@ async def register_file_management_tools(
         Returns:
             dict[str, Any]: The files copied.
         """
-        if input_data is None:
-            input_data = PackAndGoInput(source_path="", target_dir="")
-        else:
-            input_data = _coerce_input(PackAndGoInput, input_data)
+        input_data = _coerce_input(PackAndGoInput, input_data)
 
         from pathlib import Path as _Path
 
@@ -1227,10 +1318,17 @@ async def register_file_management_tools(
 
         report: dict[str, Any] = {
             "status": "success",
-            "method": "native_pack_and_go",
+            "method": "dependency_copy",
             "execution_time": result.execution_time,
             **result.data,
         }
+        warnings: list[str] = []
+        unsaved = result.data.get("unsaved_changes") or []
+        if unsaved:
+            warnings.append(
+                f"{', '.join(unsaved)} had unsaved changes, which are not in the "
+                "copy; save, then pack again to include them."
+            )
 
         if input_data.export_preview:
             preview_path = out_dir / "assembly_preview.png"
@@ -1246,7 +1344,14 @@ async def register_file_management_tools(
             report["preview_image"] = (
                 str(preview_path) if img_result.is_success else None
             )
+            if not img_result.is_success:
+                warnings.append(
+                    f"The copy is complete, but the preview couldn't be written: "
+                    f"{img_result.error}"
+                )
 
+        if warnings:
+            report["warning"] = " ".join(warnings)
         return report
 
     @mcp.tool()
@@ -1346,5 +1451,108 @@ async def register_file_management_tools(
             "execution_time": result.execution_time,
         }
 
-    tool_count = 19  # Total number of registered tools in this module
+    @mcp.tool()
+    async def create_configuration(
+        input_data: CreateConfigurationInput,
+    ) -> dict[str, Any]:
+        """Add a configuration to the active part or assembly, e.g. a long and a short version of one part.
+
+        A configuration holds its own dimension values and suppressed features;
+        give `parent` to derive it from another. The configuration that was active
+        stays active unless `activate` is on. Needs: an open part or assembly.
+        Changes: adds a configuration. Returns: `configuration` with `name`,
+        `parent`, `active` and every name in `configurations`.
+
+        Args:
+            input_data: The configuration. `name` is required; `parent`,
+                `description` and `activate` are optional.
+
+        Returns:
+            dict[str, Any]: The configuration added.
+        """
+        input_data = normalize_input(input_data, CreateConfigurationInput)
+        require_capability(
+            adapter, "create_configuration", "Active adapter can't add configurations"
+        )
+        result = await adapter.create_configuration(
+            input_data.name,
+            input_data.parent,
+            input_data.description,
+            input_data.activate,
+        )
+        require_success(result, "Failed to create configuration")
+        return {
+            "status": "success",
+            "message": f"Added configuration {input_data.name}",
+            "configuration": result.data,
+            "execution_time": result.execution_time,
+        }
+
+    @mcp.tool()
+    async def activate_configuration(
+        input_data: ConfigurationNameInput,
+    ) -> dict[str, Any]:
+        """Make a configuration of the active model the active one, and rebuild.
+
+        Dimensions and suppression then read and change in that configuration.
+        Needs: an open part or assembly with that configuration. Changes: the
+        active configuration. Returns: `active` and `previous`.
+
+        Args:
+            input_data: `name`, the configuration to show.
+
+        Returns:
+            dict[str, Any]: The active configuration.
+        """
+        input_data = normalize_input(input_data, ConfigurationNameInput)
+        require_capability(
+            adapter,
+            "activate_configuration",
+            "Active adapter can't switch configurations",
+        )
+        result = await adapter.activate_configuration(input_data.name)
+        require_success(result, "Failed to activate configuration")
+        data = result.data or {}
+        return {
+            "status": "success",
+            "message": f"Activated configuration {input_data.name}",
+            "active": data.get("active"),
+            "previous": data.get("previous"),
+            "execution_time": result.execution_time,
+        }
+
+    @mcp.tool()
+    async def delete_configuration(
+        input_data: ConfigurationNameInput,
+    ) -> dict[str, Any]:
+        """Delete a configuration of the active model; not the active one or the only one.
+
+        Activate another configuration first to delete the active one. Needs: an
+        open part or assembly with that configuration. Changes: removes it.
+        Returns: `deleted` and the `configurations` left.
+
+        Args:
+            input_data: `name`, the configuration to delete.
+
+        Returns:
+            dict[str, Any]: What was deleted.
+        """
+        input_data = normalize_input(input_data, ConfigurationNameInput)
+        require_capability(
+            adapter,
+            "delete_configuration",
+            "Active adapter can't delete configurations",
+        )
+        result = await adapter.delete_configuration(input_data.name)
+        require_success(result, "Failed to delete configuration")
+        data = result.data or {}
+        return {
+            "status": "success",
+            "message": f"Deleted configuration {input_data.name}",
+            "deleted": data.get("deleted"),
+            "configurations": data.get("configurations", []),
+            "execution_time": result.execution_time,
+        }
+
+    tool_count = 20  # Total number of registered tools in this module
     return tool_count

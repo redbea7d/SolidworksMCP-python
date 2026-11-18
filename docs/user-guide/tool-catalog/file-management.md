@@ -1,10 +1,14 @@
 # File Management Tools
 
-Open, save, and manage SolidWorks documents. Load parts and assemblies, save-as with new names or paths, manage custom file properties, and convert between file formats.
+Open, save, switch and inspect SolidWorks documents: `open_model`, `save_file`,
+`save_as` and `save_as_template`, the open documents, the feature tree, configurations, the current
+selection and Pack and Go. `load_part`, `load_assembly`, `save_part`,
+`save_assembly` and `get_file_properties` are deprecated; each section names its
+replacement.
 
 > **Prerequisite:** SolidWorks running. File-write operations need writable output paths.
 
-**Total tools in this category: 19**
+**Total tools in this category: 20**
 
 ---
 
@@ -26,6 +30,43 @@ Save the active document, to its own path or to a new path in its own format.
 ```json
 {}
 ```
+
+---
+
+### `save_as_template`
+
+Save the active part, assembly or drawing as a template, so new documents start from it.
+
+Set a document up once (units with `set_units`, a material, custom properties), save it as a template, and pass the template to `create_part`, `create_assembly` or `create_drawing` as `template`. A part saves as `.prtdot`, an assembly as `.asmdot`, a drawing as `.drwdot`. Give `file_path`, or `name` to save in SolidWorks' first template folder (Options > File Locations > Document Templates) so it also shows in File > New. Afterwards SolidWorks has the template open in place of the document, as its own File > Save As does: `save_file` would then change the template, and the reply's `warning` says so. A document saved before is left on disk as last saved. Save from a part with no features when only its settings should carry over. A wrong extension, a missing folder, or a file already there without `overwrite` is refused (`invalid_input`) before SolidWorks is asked.
+
+**Prerequisite:** An active document
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `file_path` | `str?` | — | `None` | The template's full path, ending in .prtdot (part), .asmdot (assembly) or .drwdot (drawing). Give this or `name` |
+| `name` | `str?` | — | `None` | A name, e.g. 'Bracket MMGS': saved with the right extension in SolidWorks' first template folder, so it shows in File > New. Give this or `file_path` |
+| `overwrite` | `bool` | — | `False` | Replace a template already there. Off by default. |
+
+**Sample call:**
+
+```json
+{
+  "name": "Bracket MMGS"
+}
+```
+
+Then:
+
+```json
+{
+  "name": "Bracket",
+  "template": "C:/ProgramData/SOLIDWORKS/SOLIDWORKS 2026/templates/Bracket MMGS.prtdot"
+}
+```
+
+to `create_part`.
 
 ---
 
@@ -54,6 +95,8 @@ Save the active document under a new path, as a SolidWorks file or in an exchang
 ---
 
 ### `get_file_properties`
+
+> **Deprecated:** use `get_model_info`. It keeps working until 3.0.0, when it is removed.
 
 Report the active document's file details: name, path, size, dates, type, configuration and unsaved changes.
 
@@ -128,7 +171,7 @@ and low-confidence “inspect more” cases before any write operations.
 
 ### `list_configurations`
 
-List the names of the active model's configurations.
+List the names of the active model's configurations, and which one is active.
 
 **Prerequisite:** Active document
 
@@ -140,94 +183,60 @@ List the names of the active model's configurations.
 
 ---
 
-### `manage_file_properties`
+### `create_configuration`
 
-Read or change the file-level properties of a SolidWorks file on disk.
+Add a configuration to the active part or assembly, e.g. a long and a short version of one part. The configuration that was active stays active unless `activate` is on.
 
-**Prerequisite:** Active document
+**Prerequisite:** Active part or assembly.
 
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `operation` | `str` | ✅ | `` | Operation to perform (copy, move, delete, rename) |
-| `source_path` | `str?` | — | `None` | Source file path |
-| `file_path` | `str?` | — | `None` | Alternative file path |
-| `target_path` | `str?` | — | `None` | Target file path (for copy/move/rename) |
-| `properties` | `Dict[str, Any]?` | — | `None` | File properties to set |
-| `parameters` | `Dict[str, Any]?` | — | `None` | Operation parameters |
-| `include_system` | `bool` | — | `False` | Include system properties |
+| `name` | `str` | ✅ | `` | The new configuration's name |
+| `parent` | `str?` | — | `None` | A configuration to derive it from |
+| `description` | `str` | — | `""` | Its description |
+| `activate` | `bool` | — | `false` | Leave it active |
 
 **Sample call:**
 
 ```json
-{
-  "operation": "example"
-}
+{"name": "Long", "parent": "Default"}
 ```
 
 ---
 
-### `convert_file_format`
+### `activate_configuration`
 
-Convert a SolidWorks file on disk to another format without opening it first.
+Make a configuration of the active model the active one, and rebuild.
 
-**Prerequisite:** Valid source file path
-
-**Parameters:**
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `source_file` | `str` | ✅ | `` | Source file path |
-| `target_file` | `str?` | — | `None` | Target file path |
-| `source_format` | `str?` | — | `None` | Source file format |
-| `target_format` | `str` | ✅ | `` | Target file format |
-| `output_path` | `str?` | — | `None` | Alternative output path |
-| `conversion_options` | `Dict[str, Any]?` | — | `None` | Conversion options |
-| `quality` | `str` | — | `high` | Conversion quality |
-| `units` | `str` | — | `mm` | Units |
-| `invalid_format` | `str?` | — | `None` | Invalid format for testing |
+**Prerequisite:** Active part or assembly with that configuration. Beta.
 
 **Sample call:**
 
 ```json
-{
-  "source_file": "example",
-  "target_format": "example"
-}
+{"name": "Long"}
 ```
 
 ---
 
-### `batch_file_operations`
+### `delete_configuration`
 
-Copy, move, rename or delete SolidWorks files on disk in one call.
+Delete a configuration of the active model; not the active one or the only one.
 
-**Prerequisite:** Writable directories
-
-**Parameters:**
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `operation` | `str` | ✅ | `` | Operation to perform (copy, move, delete, rename) |
-| `source_path` | `str?` | — | `None` | Source file path |
-| `file_path` | `str?` | — | `None` | Alternative file path |
-| `target_path` | `str?` | — | `None` | Target file path (for copy/move/rename) |
-| `properties` | `Dict[str, Any]?` | — | `None` | File properties to set |
-| `parameters` | `Dict[str, Any]?` | — | `None` | Operation parameters |
-| `include_system` | `bool` | — | `False` | Include system properties |
+**Prerequisite:** Active part or assembly with that configuration. Beta.
 
 **Sample call:**
 
 ```json
-{
-  "operation": "example"
-}
+{"name": "Long"}
 ```
 
 ---
 
 ### `load_part`
+
+> **Deprecated:** use `open_model`. It keeps working until 3.0.0, when it is removed.
 
 Open a part (.sldprt) from disk and make it the active document.
 
@@ -251,6 +260,8 @@ Open a part (.sldprt) from disk and make it the active document.
 
 ### `load_assembly`
 
+> **Deprecated:** use `open_model`. It keeps working until 3.0.0, when it is removed.
+
 Open an assembly (.sldasm) from disk and make it the active document.
 
 **Prerequisite:** SolidWorks running, valid .sldasm path
@@ -273,6 +284,8 @@ Open an assembly (.sldasm) from disk and make it the active document.
 
 ### `save_part`
 
+> **Deprecated:** use `save_file`. It keeps working until 3.0.0, when it is removed.
+
 Save the active part in place, or as a new .sldprt with the target path checked first.
 
 **Prerequisite:** Active Part document
@@ -286,6 +299,8 @@ Save the active part in place, or as a new .sldprt with the target path checked 
 ---
 
 ### `save_assembly`
+
+> **Deprecated:** use `save_file`. It keeps working until 3.0.0, when it is removed.
 
 Save the active assembly in place, or as a new .sldasm, optionally copying the parts it uses alongside.
 
@@ -301,28 +316,39 @@ Save the active assembly in place, or as a new .sldasm, optionally copying the p
 
 ### `pack_and_go_assembly`
 
-Copy an assembly and every part it references into one folder, with the references updated (SolidWorks Pack and Go).
+Copy an assembly and every file it uses into one folder that opens on its own.
 
-The active assembly (or `source_path`) is opened, every referenced component is enumerated via the native SolidWorks IPackAndGo COM API, and all files are written into `target_dir` with internal paths rewritten so the copy opens without any dependency on the original file locations.
+SolidWorks lists the files the assembly uses (`GetDependencies2`), and each is
+copied into `target_dir` under its own name. The copy opens with its own parts,
+because SolidWorks looks for a referenced file in the assembly's folder before
+the path stored in the assembly. The files are copied as saved on disk: save
+first, or the reply's `warning` names each open file whose unsaved changes the
+copy doesn't have. No document is closed or changed.
 
-**Prerequisite:** SolidWorks running with the assembly loaded (or openable). `target_dir` must be writable.
+The call fails, and copies nothing, when a file the assembly uses is missing,
+when two files share a name (renaming one would break the reference), or when
+`target_dir` holds the originals.
+
+(SolidWorks' own Pack and Go, `IPackAndGo`, listed only the assembly on
+SolidWorks 2026, so the tool no longer uses it.)
+
+**Prerequisite:** SolidWorks running, and the `.sldasm` on disk.
 
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `source_path` | `str` | ✅ | | Absolute path to the source `.sldasm` file |
-| `target_dir` | `str` | ✅ | | Directory where the assembly and all referenced parts will be copied |
-| `export_preview` | `bool` | — | `True` | Export an isometric PNG preview next to the copied files |
-| `overwrite` | `bool` | — | `False` | Overwrite files that already exist in `target_dir` |
+| `source_path` | `str` | ✅ | | The source `.sldasm` file |
+| `target_dir` | `str` | ✅ | | The folder to copy into; created if needed |
+| `export_preview` | `bool` | — | `False` | Write an isometric PNG preview next to the copies |
+| `overwrite` | `bool` | — | `False` | Allow a folder that already has files; only the copied files are replaced |
 
 **Sample call:**
 
 ```json
 {
   "source_path": "C:\\Projects\\robot_arm.sldasm",
-  "target_dir": "C:\\Exports\\robot_arm_pkg",
-  "export_preview": true
+  "target_dir": "C:\\Exports\\robot_arm_pkg"
 }
 ```
 
@@ -331,22 +357,14 @@ The active assembly (or `source_path`) is opened, every referenced component is 
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | `str` | `"success"` or `"error"` |
-| `file_path` | `str` | Path to the copied root assembly file |
-| `copied_file_count` | `int` | Total number of files written |
-| `copied_files` | `list[str]` | Absolute paths of every copied file |
-| `all_files_saved` | `bool` | `true` when every per-file save status is `swPackAndGoSaveStatus_Ok` (0) |
-| `save_status_warnings` | `list[str]` | Human-readable description of any non-zero per-file statuses (empty list on full success) |
-| `preview_image` | `str?` | Path to the isometric PNG preview, or `null` if export was skipped or failed |
-
-**`swPackAndGoSaveStatus_e` reference** (values reported in `save_status_warnings`):
-
-| Code | Name | Meaning |
-|------|------|---------|
-| `0` | `Ok` | File was written successfully |
-| `2` | `FileAlreadyExist` | Target file already existed and was not overwritten |
-| `3` | `MissingSource` | Source reference file could not be found |
-
-All zeros in the per-file status array (`all_files_saved: true`) means SolidWorks confirmed every file was written successfully via its native Pack-and-Go engine.
+| `method` | `str` | `"dependency_copy"` |
+| `source_assembly` | `str` | The assembly packed |
+| `target_dir` | `str` | The folder written |
+| `copied_files` | `list[str]` | The files copied |
+| `source_files` | `list[str]` | The assembly, then each file it uses |
+| `unsaved_changes` | `list[str]` | Open files whose unsaved changes are not in the copy |
+| `preview_image` | `str?` | The PNG preview, or `null` if it couldn't be written |
+| `warning` | `str?` | Unsaved changes left out, or a preview that couldn't be written |
 
 ---
 

@@ -1,5 +1,7 @@
 # SolidWorks API Coverage Map
 
+This page maps every major SolidWorks API area against what this MCP server implements, as a planning reference for new tools.
+
 **Last updated:** 2026-06-13  
 **Reference:** SolidWorks 2026 API (SOLIDWORKS COM API via pywin32)  
 **Purpose:** Planning reference for future tool development — maps every major SolidWorks API functional category against what this MCP server currently implements.
@@ -116,11 +118,11 @@
 | `create_drawing_view` | Creates a model view in a drawing (simulated) | IDrawingDoc::CreateDrawViewFromModelView3 |
 | `add_dimension` | Adds a dimension in a drawing (simulated) | IModelDocExtension::AddSmartDimension2 |
 | `add_note` | Adds a text note (simulated) | IAnnotationView::InsertNote |
-| `create_section_view` | Creates a section view (simulated) | IDrawingDoc::CreateSectionView5 |
-| `create_detail_view` | Creates a detail view (simulated) | IDrawingDoc::CreateDetailViewAt4 |
-| `update_sheet_format` | Applies a sheet format template (simulated) | ISheet::SetSheetInfo2 |
-| `auto_dimension_view` | Auto-dimensions a view (simulated) | IModelDocExtension::AddSmartDimension2 |
-| `check_drawing_standards` | Validates against drafting standards (simulated) | Internal |
+| `create_section_view` | A section view along a line across a view | IDrawingDoc::CreateSectionViewAt5 |
+| `create_detail_view` | A detail view of a circle, at a scale | IDrawingDoc::CreateDetailViewAt4 |
+| `update_sheet_format` | A new sheet format and paper size, views kept | IDrawingDoc::SetupSheet5 |
+| `auto_dimension_view` | Auto-dimensions one view, counted before and after | IDrawingDoc::AutoDimension |
+| `check_drawing` | Completeness check: views on the sheet, dimensions, title block, BOM, dangling annotations | IView::GetOutline, IAnnotation::IsDangling |
 | `create_technical_drawing` | Full drawing-from-model workflow | IDrawingDoc |
 | `add_drawing_view` | Add/update/delete a drawing view | IDrawingDoc |
 | `add_annotation` | Add annotation (note, balloon, symbol) | IAnnotationView |
@@ -365,7 +367,7 @@ Extends `IModelDoc2` for drawings: sheets, views, annotations, BOM tables, revis
 | Linear pattern (`FeatureLinearPattern3`) | **Missing** (High) | Array of features/bodies |
 | Circular pattern (`FeatureCircularPattern3`) | **Missing** (High) | Rotational array of features |
 | Mirror feature (`InsertMirrorFeature2`) | **Missing** (High) | Mirror features about a plane |
-| Hole Wizard (`HoleWizard5`) | **Missing** (High) | Parametric holes per ANSI/ISO standards |
+| Hole Wizard (`HoleWizard5`) | Added (`create_hole`, `list_hole_sizes`) | Parametric holes per ANSI/ISO standards |
 | Draft feature (`InsertDraftXpert`) | **Missing** (Medium) | Parting line draft |
 | `InsertDome` | **Missing** (Low) | Dome feature |
 | `InsertSplit` | **Missing** (Low) | Split body feature |
@@ -634,14 +636,24 @@ These are the most impactful gaps — operations that a typical modeling workflo
 **Tools to add:**
 - `create_hole_wizard(standard: str, type: str, size: str, depth: float | None, position_x: float, position_y: float, plane: str)` → `IFeatureManager::HoleWizard5`
 
+**Status (2026-11-16):** `create_hole` (`HoleWizard5`, several holes per feature
+through its position sketch) and `list_hole_sizes`, which reads the hole types
+and sizes from the Toolbox library file (`swbrowser.sldedb`, SQLite, read-only)
+rather than COM, so sizes are checked before the hole is asked for.
+
 ---
 
 ### 3.7 Convert Entities (Sketch)
 
 **Why needed:** "Convert Entities" projects existing model edges/faces into the active sketch. This is used in nearly every sketch-on-face workflow (e.g., pocket on a face that matches the face boundary). Without it, users must manually redraw geometry.
 
-**Tools to add:**
-- `sketch_convert_entities(entity_names: list[str])` → `ISketchManager::SketchConvertEntities`
+**Status (2026-11-16):** added and checked live on SolidWorks 2026:
+`sketch_convert_entities` takes points on edges or a face (mm) and calls
+`ISketchManager::SketchUseEdge3`. The same change added `create_hole`
+(`HoleWizard5`), `add_cosmetic_thread` (`InsertCosmeticThread3`),
+`pattern_linear` (`FeatureLinearPattern5`), `create_shell`
+(`InsertFeatureShell`), `add_draft` (`InsertMultiFaceDraft`) and
+`create_rib` (`InsertRib`).
 
 ---
 

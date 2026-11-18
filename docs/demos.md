@@ -146,8 +146,9 @@ powershell -ExecutionPolicy Bypass -File tests\scripts\live_demo.ps1 `
 
 The recording opens on the prompts, then replays the build as the script
 below runs it, at the sizes the stand was finished at by hand (see
-"Finished by hand"): 24 tool calls, each captioned with its result, and the
-finished part in an isometric view. It is sped up five times.
+"Finished by hand"): 23 tool calls, each captioned with its result. The
+camera turns to an isometric view after the block, each cut, the arches and
+the pocket, so each feature shows as it is made. It is sped up five times.
 
 **Printed.** The finished stand on the printer, in PETG, printed on its side
 with tree supports (sped up):
@@ -219,11 +220,11 @@ what it can't decide alone: the back of the stand and where to save.
    `add_rectangle`, `exit_sketch` and `create_cut_extrude`
    `ThroughAllBoth`.
 4. **Arches**: one `add_fillet` R25 on six edges.
-5. **Check and save**: `rebuild_model`, `verify_model`, `save_part`.
+5. **Check and save**: `rebuild_model`, `verify_model`, `save_file`.
 6. **Pocket** (the follow-up): `list_open_documents` (the stand is still
    the active part), `create_reference_plane`, then `create_sketch`,
    `add_rectangle`, `exit_sketch`, `create_cut_extrude` 3 mm, and
-   `rebuild_model`, `verify_model`, `save_part` again.
+   `rebuild_model`, `verify_model`, `save_file` again.
 
 ??? info "All 28 calls with their arguments"
 
@@ -246,7 +247,7 @@ what it can't decide alone: the back of the stand and where to save.
     | 15 | `add_fillet` | `{"radius": 25, "edge_names": ["0.056855,0.040,0.075", "-0.056855,0.040,0.075", "0.076855,0.040,0.055", "-0.076855,0.040,0.055", "0.076855,0.040,-0.055", "-0.076855,0.040,-0.055"]}` |
     | 16 | `rebuild_model` | `{}` |
     | 17 | `verify_model` | `{"bounding_box_mm": [193.71, 55, 190], "volume_mm3": 840264, "solid_body_count": 1, "feature_count": 4, "relative_tolerance": 0.005}` |
-    | 18 | `save_part` | `{"file_path": "MonitorStand.SLDPRT"}` |
+    | 18 | `save_file` | `{"file_path": "MonitorStand.SLDPRT"}` |
     | 19 | `list_open_documents` | `{}` |
     | 20 | `create_reference_plane` | `{"reference": "Top Plane", "offset": 55}` |
     | 21 | `create_sketch` | `{"plane": "Plane1"}` |
@@ -255,7 +256,7 @@ what it can't decide alone: the back of the stand and where to save.
     | 24 | `create_cut_extrude` | `{"sketch_name": "Sketch4", "depth": 3, "end_condition": "Blind"}` |
     | 25 | `rebuild_model` | `{}` |
     | 26 | `verify_model` | `{"bounding_box_mm": [193.71, 55, 190], "volume_mm3": 752592.9, "solid_body_count": 1, "relative_tolerance": 0.001}` |
-    | 27 | `save_part` | `{}` |
+    | 27 | `save_file` | `{}` |
     | 28 | `verify_model` | `{"feature_count": 6}` |
 
     The fillet's edges are midpoints in metres; the other lengths are mm.
@@ -281,16 +282,16 @@ the same legs, arches and pocket outline, cut 11.46 mm deep, comes to
 901 762 mm³ by hand. SolidWorks measures 901 769 mm³.
 
 The script below was then updated to reproduce this part: 66 mm, a 26 mm
-top and an 11.46 mm pocket are its defaults. One thing can't be matched:
-the tools can only offset a plane from a named plane, so the script puts
-the pocket's plane at Top Plane offset by the height. The solid is the
-same, but the plane doesn't follow a height edited by hand. To change the
-height, rerun the script.
+top and an 11.46 mm pocket are its defaults. It sketches the pocket on the
+stand's top face (`create_sketch` with `face_point`), as the user did by
+hand, so the pocket follows the height when `D1@Boss-Extrude1` is edited
+later, and no reference plane is needed.
 
 **Rebuild it, or at another size.** The script replays the
 calls with every dimension an option, and checks the result the same way.
-At its defaults it makes the 24 calls in the recording; the session's own
-28 calls are listed above.
+At its defaults it makes 22 calls, and 23 with `--stl` as in the recording;
+the session's own 28 calls are listed above. `--look` turns the camera to
+an isometric view after each feature, as the recording does.
 
 ```powershell
 # The finished stand
@@ -312,7 +313,7 @@ To record the demo again:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\scripts\live_demo.ps1 `
-    -Test tests/live/test_live_sw_monitor_stand_demo.py `
+    -Test tests/live/test_live_sw_monitor_stand_demo.py::test_monitor_stand_from_prompt_to_part `
     -CaptureDir docs/assets/demos/monitor-stand -Record -PromptSeconds 12
 ```
 
@@ -871,6 +872,50 @@ with `not_found` and a message saying so, and no file is written.
 **Tool calls**
 
 1. `export_flat_pattern({"file_path": "flat.dxf"})`: `not_found`
+
+## Holes {#holes}
+
+Source: [`tests/live/test_live_sw_part_features.py`](https://github.com/andrewbartels1/SolidworksMCP-python/blob/main/tests/live/test_live_sw_part_features.py).
+
+### A plate of holes, placed from points {#hole-positions}
+
+![create_hole drilling a 100 x 60 x 15 mm plate: counterbores, countersinks and tapped holes from points, a mirror, a ring of six, and a point off the face refused on purpose](assets/demos/part-features/test_holes_at_several_points-motion.gif)
+
+> *Example prompt:* Drill a 100 x 60 x 15 mm plate: M6 counterbores down
+> both ends, countersinks and tapped holes inside them, a ring of six Ø6
+> holes in the middle.
+
+**What it shows.** Holes placed the way you place them by hand in the Hole
+Wizard: one hole, then a point in its position sketch for each of the
+others. Each `create_hole` call below is one Hole Wizard feature holding
+three holes (`hole_count: 3`). The counterbores are mirrored about the Right
+Plane, and one Ø6 hole is patterned six times round an axis through the
+origin. 18 holes in all, and each step's volume change adds up: the plate
+goes from 90,000 to 81,745.7 mm³.
+
+| Step | Feature | Volume change (mm³) |
+| --- | --- | --- |
+| 3 M6 counterbores, 8 mm deep | `CBORE for M6 Hex Socket Head Cap Screw1` | -2,056.7 |
+| mirrored to the other end | `Mirror1` | -2,056.7 |
+| 3 M6 countersinks, 10 mm deep | `CSK for M6 Countersunk Flat Head Screw1` | -1,458.9 |
+| 3 M6x1.0 tapped holes, through | `M6 Tapped Hole1` | -883.6 |
+| one Ø6 hole, 10 mm deep | `Ø6.0 (6) Diameter Hole1` | -299.7 |
+| five more round the y axis | `CirPattern1` | -1,498.7 (5 x 299.7) |
+
+The last call fails **on purpose**, and the GIF says so before it runs: one
+position is 5 mm above the top face. The tool refuses it with the distance,
+deletes the hole it had started, and the plate's volume doesn't change.
+
+**Tool calls**
+
+1. `create_hole({"face_point": [-38, 15, -18], "hole_type": "counterbore", "size": "M6", "end_condition": "blind", "depth": 8, "positions": [[-38, 15, 0], [-38, 15, 18]]})`
+2. `mirror_feature({"features": ["CBORE for M6 Hex Socket Head Cap Screw1"], "mirror_plane": "Right Plane", "mirror_bodies": false})`
+3. `create_hole({"face_point": [-22, 15, -18], "hole_type": "countersink", "size": "M6", "end_condition": "blind", "depth": 10, "positions": [[-22, 15, 0], [-22, 15, 18]]})`
+4. `create_hole({"face_point": [22, 15, -18], "hole_type": "tapped", "size": "M6x1.0", "positions": [[22, 15, 0], [22, 15, 18]]})`
+5. `create_hole({"face_point": [10, 15, 0], "hole_type": "simple", "size": "Ø6.0", "end_condition": "blind", "depth": 10})`
+6. `create_axis({"reference": "y"})`
+7. `pattern_circular({"features": ["Ø6.0 (6) Diameter Hole1"], "axis": "Axis1", "count": 6})`
+8. `create_hole({"face_point": [0, 15, 22], "hole_type": "counterbore", "size": "M6", "end_condition": "blind", "depth": 8, "positions": [[0, 20, -22]]})`, refused on purpose
 
 ## Run a demo yourself
 

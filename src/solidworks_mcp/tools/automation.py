@@ -1,23 +1,18 @@
 """Automation tools for SolidWorks MCP Server.
 
-Use these when the workflow is already defined and you need repeatable execution.
-Recommended order: generate_vba_code for complex steps, record or stop a macro when a
-manual flow should be captured, batch_process_files for many files, manage_design_table
-for configuration-driven variants, execute_workflow for scripted pipelines,
-create_template for reusable standards, and optimize_performance for tuning.
+``generate_vba_code`` writes a VBA macro skeleton for a step the tools don't
+cover.
 """
 
-from typing import Any
+import re
+from typing import Any, Literal
 
 from fastmcp import FastMCP
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from ..adapters.base import SolidWorksAdapter
 from .input_compat import CompatInput
 from .tool_boundary import (
-    UnsupportedOperationError,
-    require_capability,
-    require_success,
     with_tool_boundary,
 )
 
@@ -27,32 +22,44 @@ from .tool_boundary import (
 class GenerateVBAInput(CompatInput):
     """Input schema for generating VBA code.
 
+    ``parameters`` and ``code_style`` are refused
+    (``input_compat.REMOVED_INPUTS``): neither shaped the code.
+
     Attributes:
-        code_style (str): The code style value.
-        include_error_handling (bool): The include error handling value.
-        operation_description (str | None): The operation description value.
-        operation_type (str | None): The operation type value.
-        parameters (dict[str, Any]): The parameters value.
-        target_document (str): The target document value.
+        include_error_handling (bool): Whether the Sub gets an error handler.
+        operation_description (str | None): What the macro is for; it also
+            names the Sub.
+        operation_type (str | None): An alias for ``operation_description``.
+        target_document (str): The document type the macro runs on.
     """
 
     operation_description: str | None = Field(
         default=None, description="Description of the operation to generate VBA for"
     )
     operation_type: str | None = Field(default=None, description="Operation type alias")
-    parameters: dict[str, Any] = Field(
-        default_factory=dict, description="Operation parameters"
-    )
-    target_document: str = Field(
-        default="Part", description="Target document type (Part, Assembly, Drawing)"
+    target_document: Literal["Part", "Assembly", "Drawing"] = Field(
+        default="Part",
+        description=(
+            "The document type the macro runs on; it stops, printing why, on any other"
+        ),
     )
     include_error_handling: bool = Field(
         default=True, description="Include error handling in generated code"
     )
-    code_style: str = Field(
-        default="professional",
-        description="Code style (simple, professional, advanced)",
-    )
+
+    @field_validator("target_document", mode="before")
+    @classmethod
+    def _document_type(cls, value: Any) -> Any:
+        """Accept the document type in any case ("part", "PART").
+
+        Args:
+            value: The document type as sent.
+
+        Returns:
+            Any: ``Part``, ``Assembly`` or ``Drawing`` for a string; anything
+            else unchanged, for the type check to refuse.
+        """
+        return value.strip().capitalize() if isinstance(value, str) else value
 
     def model_post_init(self, __context: Any) -> None:
         """Provide model post init support for the generate vbainput.
@@ -70,203 +77,97 @@ class GenerateVBAInput(CompatInput):
 VBAGenerationInput = GenerateVBAInput
 
 
-class RecordMacroInput(CompatInput):
-    """Input schema for macro recording.
+#: ``swDocumentTypes_e``: the value ``IModelDoc2.GetType`` returns for each
+#: document type a macro can be written for.
+_VBA_DOC_TYPES = {"Part": 1, "Assembly": 2, "Drawing": 3}
+#: VBA's limit on an identifier's length.
+_VBA_NAME_LIMIT = 255
 
-    Attributes:
-        auto_start (bool): The auto start value.
-        capture_keyboard (bool): The capture keyboard value.
-        capture_mouse (bool): The capture mouse value.
-        description (str): The description value.
-        macro_name (str | None): The macro name value.
-        output_file (str | None): The output file value.
-        recording_mode (str | None): The recording mode value.
-        recording_name (str | None): The recording name value.
+
+def _vba_sub_name(description: str) -> str:
+    """A valid VBA Sub name made from an operation description.
+
+    Every run of characters other than letters, digits and underscores
+    becomes one underscore; a name that doesn't start with a letter gets
+    ``Macro_`` in front; the result is cut to VBA's 255-character limit.
+
+    Args:
+        description: The operation description, e.g. "Add 3 holes (M6)".
+
+    Returns:
+        str: The Sub name, e.g. ``Add_3_holes_M6``.
     """
-
-    macro_name: str | None = Field(
-        default=None, description="Name for the recorded macro"
-    )
-    recording_name: str | None = Field(default=None, description="Recording name alias")
-    output_file: str | None = Field(default=None, description="Output file alias")
-    recording_mode: str | None = Field(default=None, description="Recording mode alias")
-    capture_mouse: bool = Field(default=True, description="Capture mouse actions")
-    capture_keyboard: bool = Field(default=True, description="Capture keyboard actions")
-    description: str = Field(
-        default="", description="Description of the macro functionality"
-    )
-    auto_start: bool = Field(default=True, description="Automatically start recording")
-
-    def model_post_init(self, __context: Any) -> None:
-        """Provide model post init support for the record macro input.
-
-        Args:
-            __context (Any): The context value.
-
-        Returns:
-            None: None.
-        """
-        if self.macro_name is None:
-            self.macro_name = self.recording_name or "Recorded Macro"
+    name = re.sub(r"[^A-Za-z0-9_]+", "_", description).strip("_")
+    if not name[:1].isalpha():
+        name = f"Macro_{name}".rstrip("_")
+    return name[:_VBA_NAME_LIMIT]
 
 
-class BatchProcessInput(CompatInput):
-    """Input schema for batch processing.
+def _vba_skeleton(
+    sub_name: str, description: str, target_document: str, error_handling: bool
+) -> str:
+    """The macro text ``generate_vba_code`` returns.
 
-    Attributes:
-        batch_operation (str | None): The batch operation value.
-        file_pattern (str | None): The file pattern value.
-        filter_patterns (list[str]): The filter patterns value.
-        operation (str | None): The operation value.
-        operation_type (str | None): The operation type value.
-        parallel_processing (bool): The parallel processing value.
-        recursive (bool): The recursive value.
-        source_directory (str): The source directory value.
-        target_format (str | None): The target format value.
+    Late-bound (``As Object``), so it needs no type-library reference when
+    run as a text macro; ``Debug.Print`` instead of ``MsgBox``, so a run never
+    waits on a dialog. A ``Sub main()`` calls the named Sub: SolidWorks runs
+    a ``.swb`` macro only through ``main`` (live batch 3), and ``main`` is
+    ``execute_macro``'s default procedure.
+
+    Args:
+        sub_name: The Sub's name, from :func:`_vba_sub_name`.
+        description: The operation description, for the header comment.
+        target_document: Part, Assembly or Drawing.
+        error_handling: Whether to add an error handler.
+
+    Returns:
+        str: The macro.
     """
-
-    source_directory: str = Field(description="Directory containing SolidWorks files")
-    operation_type: str | None = Field(
-        default=None,
-        description="Type of operation (rebuild, save_as, export, update_properties)",
-    )
-    batch_operation: str | None = Field(
-        default=None, description="Batch operation alias"
-    )
-    target_format: str | None = Field(
-        default=None, description="Target format for export operations"
-    )
-    file_pattern: str | None = Field(default=None, description="File pattern alias")
-    parallel_processing: bool = Field(
-        default=False, description="Parallel processing alias"
-    )
-    operation: str | None = Field(default=None, description="Operation alias")
-    recursive: bool = Field(
-        default=False, description="Process subdirectories recursively"
-    )
-    filter_patterns: list[str] = Field(
-        default=["*.sldprt", "*.sldasm"], description="File patterns to process"
-    )
-
-    def model_post_init(self, __context: Any) -> None:
-        """Provide model post init support for the batch process input.
-
-        Args:
-            __context (Any): The context value.
-
-        Returns:
-            None: None.
-        """
-        if self.operation_type is None:
-            self.operation_type = self.batch_operation or self.operation or "export"
-
-
-class DesignTableInput(CompatInput):
-    """Input schema for design table operations.
-
-    Attributes:
-        auto_create_configurations (bool): The auto create configurations value.
-        auto_update (bool): The auto update value.
-        configurations (list[str]): The configurations value.
-        create_configurations (bool): The create configurations value.
-        excel_file (str | None): The excel file value.
-        model_path (str | None): The model path value.
-        operation (str | None): The operation value.
-        parameters (list[str]): The parameters value.
-        table_file (str | None): The table file value.
-        table_type (str | None): The table type value.
-    """
-
-    table_type: str | None = Field(
-        default=None, description="Type of design table (create, update, import)"
-    )
-    model_path: str | None = Field(default=None, description="Model path alias")
-    table_file: str | None = Field(default=None, description="Design table file alias")
-    operation: str | None = Field(default=None, description="Operation alias")
-    auto_update: bool = Field(default=False, description="Auto update alias")
-    create_configurations: bool = Field(
-        default=False, description="Create configurations alias"
-    )
-    auto_create_configurations: bool = Field(
-        default=False, description="Auto-create alias"
-    )
-    excel_file: str | None = Field(
-        default=None, description="Excel file path for import/export"
-    )
-    parameters: list[str] = Field(
-        default=[], description="Parameters to include in design table"
-    )
-    configurations: list[str] = Field(default=[], description="Configuration names")
-
-    def model_post_init(self, __context: Any) -> None:
-        """Provide model post init support for the design table input.
-
-        Args:
-            __context (Any): The context value.
-
-        Returns:
-            None: None.
-        """
-        if self.table_type is None:
-            self.table_type = self.operation or "create"
-        if self.create_configurations:
-            self.auto_create_configurations = True
-
-
-class WorkflowInput(CompatInput):
-    """Input schema for workflow automation.
-
-    Attributes:
-        error_handling (str): The error handling value.
-        parallel_execution (bool): The parallel execution value.
-        steps (list[dict[str, Any]]): The steps value.
-        workflow_name (str): The workflow name value.
-    """
-
-    workflow_name: str = Field(description="Name of the workflow")
-    steps: list[dict[str, Any]] = Field(description="List of workflow steps")
-    parallel_execution: bool = Field(
-        default=False, description="Execute compatible steps in parallel"
-    )
-    error_handling: str = Field(
-        default="stop", description="Error handling strategy (stop, skip, retry)"
-    )
-
-
-class TemplateInput(CompatInput):
-    """Input schema for template operations.
-
-    Attributes:
-        base_file (str | None): The base file value.
-        include_custom_properties (bool): The include custom properties value.
-        include_features (list[str]): The include features value.
-        include_materials (bool): The include materials value.
-        metadata (dict[str, Any]): The metadata value.
-        output_path (str | None): The output path value.
-        source_model (str | None): The source model value.
-        template_name (str): The template name value.
-        template_type (str): The template type value.
-    """
-
-    template_type: str = Field(description="Type of template (part, assembly, drawing)")
-    template_name: str = Field(description="Name for the template")
-    base_file: str | None = Field(
-        default=None, description="Base file to create template from"
-    )
-    source_model: str | None = Field(default=None, description="Source model alias")
-    output_path: str | None = Field(default=None, description="Output path alias")
-    include_custom_properties: bool = Field(
-        default=False, description="Include custom properties alias"
-    )
-    include_materials: bool = Field(
-        default=False, description="Include materials alias"
-    )
-    include_features: list[str] = Field(
-        default_factory=list, description="Include features alias"
-    )
-    metadata: dict[str, Any] = Field(
-        default={}, description="Template metadata and properties"
-    )
+    comment = " ".join(description.split())  # one line, whatever was sent
+    doc_type = _VBA_DOC_TYPES[target_document]
+    lines = [
+        f"' Generated VBA code for: {comment}",
+        f"' Runs on: {target_document}",
+        "' Generated by: SolidWorks MCP Server",
+        "",
+        "Option Explicit",
+        "",
+    ]
+    if sub_name.lower() != "main":  # VBA names ignore case
+        lines += ["Sub main()", f"    {sub_name}", "End Sub", ""]
+    lines += [
+        f"Sub {sub_name}()",
+        "    Dim swApp As Object",
+        "    Dim swModel As Object",
+    ]
+    if error_handling:
+        lines.append("    On Error GoTo ErrorHandler")
+    lines += [
+        "",
+        "    Set swApp = Application.SldWorks",
+        "    Set swModel = swApp.ActiveDoc",
+        "    If swModel Is Nothing Then",
+        '        Debug.Print "No active document"',
+        "        Exit Sub",
+        "    End If",
+        f"    If swModel.GetType <> {doc_type} Then",
+        f'        Debug.Print "The active document is not a {target_document}"',
+        "        Exit Sub",
+        "    End If",
+        "",
+        "    ' TODO: the operation itself",
+        "",
+        '    Debug.Print "Done"',
+        "    Exit Sub",
+    ]
+    if error_handling:
+        lines += [
+            "",
+            "ErrorHandler:",
+            '    Debug.Print "Error " & Err.Number & ": " & Err.Description',
+        ]
+    lines.append("End Sub")
+    return "\n".join(lines)
 
 
 async def register_automation_tools(
@@ -290,315 +191,47 @@ async def register_automation_tools(
 
     @mcp.tool()
     async def generate_vba_code(input_data: GenerateVBAInput) -> dict[str, Any]:
-        """Write a VBA macro skeleton for an operation you describe: the SolidWorks connection, the active document and optional error handling, with the operation itself left as a TODO.
+        """Write a VBA macro skeleton for an operation you describe: the SolidWorks connection, a check of the active document's type and optional error handling, with the operation itself left as a TODO.
 
-        Use it as a starting point for a custom macro. For a working macro for a
+        Use it as a starting point for a custom macro. For a complete macro for a
         specific feature, use a `generate_vba_*` tool (extrusion, revolve, mates,
-        drawing views, batch export). The macro comes back as text for the SolidWorks
-        VBA editor; `execute_macro` runs only binary .swp files. Read-only. Nothing runs
-        in SolidWorks. Returns: `vba_code` with `code`, `operation`, `target_document`,
-        `style`, `lines_of_code` and `includes_error_handling`.
+        drawing views, batch export). The macro reports through `Debug.Print`, never a
+        dialog, so it runs without waiting on anyone: save it as a .swb file and run it
+        with `execute_macro` (its `Sub main()` calls the Sub named `sub_name`; SolidWorks
+        runs a .swb macro only through `main`). It stops, printing why,
+        when the active document isn't `target_document`. Read-only. Nothing runs in
+        SolidWorks. Returns: `vba_code` with `code`, `sub_name`, `operation`,
+        `target_document`, `lines_of_code` and `includes_error_handling`.
 
         Args:
             input_data: The macro to write. Nothing is required: give
                 `operation_description` (it also names the Sub) and
-                `target_document`; `include_error_handling` and `code_style` have
-                defaults.
+                `target_document` (Part, Assembly or Drawing);
+                `include_error_handling` is on by default.
 
         Returns:
             dict[str, Any]: The macro text.
         """
-        if hasattr(adapter, "generate_vba_code"):
-            result = await adapter.generate_vba_code(input_data.model_dump())
-            require_success(result, "Failed to generate VBA code")
-            return {
-                "status": "success",
-                "message": f"Generated VBA code for: {input_data.operation_description}",
-                "data": result.data,
-                "execution_time": result.execution_time,
-            }
-
-        # Build a VBA code skeleton from the operation description. This
-        # is real, usable output (a labelled template), not a stand-in
-        # for a SolidWorks operation that was supposed to run.
-        sample_vba = f"""
-' Generated VBA code for: {input_data.operation_description}
-' Target: {input_data.target_document}
-' Generated by: SolidWorks MCP Server
-
-Option Explicit
-
-Sub {(input_data.operation_description or "").replace(" ", "_")}()
-Dim swApp As SldWorks.SldWorks
-Dim swModel As SldWorks.ModelDoc2
-
-{("On Error GoTo ErrorHandler" if input_data.include_error_handling else "")}
-
-' Connect to SolidWorks
-Set swApp = Application.SldWorks
-Set swModel = swApp.ActiveDoc
-
-If swModel Is Nothing Then
-    MsgBox "No active document found"
-    Exit Sub
-End If
-
-' Main operation code would go here
-' TODO: Implement specific operation
-
-MsgBox "Operation completed successfully"
-Exit Sub
-
-{("ErrorHandler:" if input_data.include_error_handling else "")}
-{('    MsgBox "Error: " & Err.Description' if input_data.include_error_handling else "")}
-{("    Resume Next" if input_data.include_error_handling else "")}
-
-End Sub
-"""
-
+        description = input_data.operation_description or ""
+        sub_name = _vba_sub_name(description)
+        code = _vba_skeleton(
+            sub_name,
+            description,
+            input_data.target_document,
+            input_data.include_error_handling,
+        )
         return {
             "status": "success",
-            "message": f"Generated VBA code for: {input_data.operation_description}",
+            "message": f"Generated VBA code for: {description}",
             "vba_code": {
-                "code": sample_vba.strip(),
-                "operation": input_data.operation_description,
+                "code": code,
+                "sub_name": sub_name,
+                "operation": description,
                 "target_document": input_data.target_document,
-                "style": input_data.code_style,
-                "lines_of_code": len(sample_vba.strip().split("\n")),
+                "lines_of_code": len(code.split("\n")),
                 "includes_error_handling": input_data.include_error_handling,
             },
         }
 
-    @mcp.tool(name="automation_start_macro_recording")
-    async def start_macro_recording(input_data: RecordMacroInput) -> dict[str, Any]:
-        """Start SolidWorks' macro recorder (the automation family's copy of `start_macro_recording`).
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. Recording is
-        done in SolidWorks today (Tools > Macro > Record). Changes: once available,
-        starts a recording session. Returns: once available, the session details under
-        `data`.
-
-        Args:
-            input_data: The recording. Nothing is required: `macro_name`,
-                `output_file`, `recording_mode` and the capture switches have
-                defaults.
-
-        Returns:
-            dict[str, Any]: The session, or a `not_supported` error.
-        """
-        require_capability(
-            adapter,
-            "start_macro_recording",
-            "Active adapter does not support start_macro_recording; "
-            f"no recording of {input_data.macro_name} was started.",
-        )
-        result = await adapter.start_macro_recording(input_data.model_dump())
-        require_success(result, "Failed to start macro recording")
-        return {
-            "status": "success",
-            "message": f"Started recording macro: {input_data.macro_name}",
-            "data": result.data,
-            "execution_time": result.execution_time,
-        }
-
-    @mcp.tool(name="automation_stop_macro_recording")
-    async def stop_macro_recording(input_data: dict[str, Any]) -> dict[str, Any]:
-        """Stop a macro recording and save it (the automation family's copy of `stop_macro_recording`).
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. Recording is
-        done in SolidWorks today (Tools > Macro > Stop). Changes: once available, ends
-        the session and writes the macro file. Returns: once available, the saved
-        macro's details.
-
-        Args:
-            input_data: A mapping; nothing in it is used yet.
-
-        Returns:
-            dict[str, Any]: A `not_supported` error.
-        """
-        raise UnsupportedOperationError(
-            "No adapter capability exists for stopping a macro "
-            "recording; this tool never started a real recording "
-            "session, so there is nothing to stop or save."
-        )
-
-    @mcp.tool()
-    async def batch_process_files(input_data: BatchProcessInput) -> dict[str, Any]:
-        """Run one operation (rebuild, save as, export or property update) on every matching file in a folder.
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. To export
-        several files today, open each with `open_model` and use `export_step`.
-        Changes: once available, opens, changes and saves each file. Returns: once available, a per-file result under `data`.
-
-        Args:
-            input_data: The batch. `source_directory` is required; `operation_type`,
-                `file_pattern`, `target_format` and `recursive` have defaults.
-
-        Returns:
-            dict[str, Any]: The results, or a `not_supported` error.
-        """
-        require_capability(
-            adapter,
-            "batch_process_files",
-            "Active adapter does not support batch_process_files; no "
-            f"files in {input_data.source_directory} were processed.",
-        )
-        result = await adapter.batch_process_files(input_data.model_dump())
-        require_success(result, "Batch processing failed")
-        return {
-            "status": "success",
-            "message": f"Batch {input_data.operation_type} completed",
-            "data": result.data,
-            "execution_time": result.execution_time,
-        }
-
-    @mcp.tool()
-    async def manage_design_table(input_data: DesignTableInput) -> dict[str, Any]:
-        """Create, read or update a design table (an Excel sheet that drives a model's configurations).
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. To list a
-        model's configurations today, use `list_configurations`. Changes: once
-        available, inserts or edits the design table and its configurations. Returns:
-        once available, the table's state under `data`.
-
-        Args:
-            input_data: The design table. Nothing is required: give `model_path`,
-                `operation` and `excel_file`; `parameters`, `configurations` and the
-                auto-update switches have defaults.
-
-        Returns:
-            dict[str, Any]: The result, or a `not_supported` error.
-        """
-        require_capability(
-            adapter,
-            "manage_design_table",
-            "Active adapter does not support manage_design_table; no "
-            f"{input_data.table_type} operation was performed.",
-        )
-        result = await adapter.manage_design_table(input_data.model_dump())
-        require_success(result, "Design table management failed")
-        return {
-            "status": "success",
-            "message": f"Design table {input_data.table_type} completed",
-            "data": result.data,
-            "execution_time": result.execution_time,
-        }
-
-    @mcp.tool()
-    async def execute_workflow(input_data: WorkflowInput) -> dict[str, Any]:
-        """Run a named sequence of tool steps, in order or in parallel, with an error policy.
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. Call the
-        tools one at a time instead. Changes: once available, whatever the steps change.
-        Returns: once available, each step's result under `data`.
-
-        Args:
-            input_data: The workflow. `workflow_name` and `steps` (a list of step
-                mappings) are required; `parallel_execution` and `error_handling`
-                have defaults.
-
-        Returns:
-            dict[str, Any]: The step results, or a `not_supported` error.
-        """
-        require_capability(
-            adapter,
-            "execute_workflow",
-            "Active adapter does not support execute_workflow; "
-            f"workflow '{input_data.workflow_name}' was not run.",
-        )
-        result = await adapter.execute_workflow(input_data.model_dump())
-        require_success(result, "Workflow execution failed")
-        return {
-            "status": "success",
-            "message": f"Workflow '{input_data.workflow_name}' completed",
-            "data": result.data,
-            "execution_time": result.execution_time,
-        }
-
-    @mcp.tool()
-    async def create_template(input_data: TemplateInput) -> dict[str, Any]:
-        """Create a part, assembly or drawing template file (.prtdot, .asmdot, .drwdot) with standard settings.
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. To capture an
-        existing model's settings, `extract_template` is also not available yet.
-        Changes: once available, writes the template file. Returns: once available, the
-        template's path and settings under `data`.
-
-        Args:
-            input_data: The template. `template_type` and `template_name` are
-                required; `source_model`, `output_path` and the include switches have
-                defaults.
-
-        Returns:
-            dict[str, Any]: The template, or a `not_supported` error.
-        """
-        require_capability(
-            adapter,
-            "create_template",
-            "Active adapter does not support create_template; no "
-            f"{input_data.template_type} template "
-            f"'{input_data.template_name}' was created.",
-        )
-        result = await adapter.create_template(input_data.model_dump())
-        require_success(result, "Template creation failed")
-        return {
-            "status": "success",
-            "message": f"Created {input_data.template_type} template: {input_data.template_name}",
-            "data": result.data,
-            "execution_time": result.execution_time,
-        }
-
-    @mcp.tool()
-    async def optimize_performance(input_data: dict[str, Any]) -> dict[str, Any]:
-        """Review SolidWorks' performance settings and apply faster ones.
-
-        Not available yet: no adapter implements it, so every call returns an error with
-        `error_type: "not_supported"`. It is planned for a future release. Changes: once
-        available, SolidWorks system options. Returns: once available, the settings
-        changed under `data`.
-
-        Args:
-            input_data: A mapping of optimisation options; none is required.
-
-        Returns:
-            dict[str, Any]: The changes, or a `not_supported` error.
-        """
-        require_capability(
-            adapter,
-            "optimize_performance",
-            "Active adapter does not support optimize_performance; "
-            "no settings were analyzed or changed.",
-        )
-        result = await adapter.optimize_performance(input_data)
-        require_success(result, "Performance optimization failed")
-        return {
-            "status": "success",
-            "message": "Performance optimization completed",
-            "data": result.data,
-            "execution_time": result.execution_time,
-        }
-
-    tool_count = 8  # Number of tools registered
+    tool_count = 1  # generate_vba_code
     return tool_count
-
-
-class PerformanceOptimizationInput(CompatInput):
-    """Input schema for performance optimization.
-
-    Attributes:
-        optimization_type (str): The optimization type value.
-        parameters (dict[str, Any]): The parameters value.
-        target_metric (str): The target metric value.
-    """
-
-    optimization_type: str = Field(description="Type of optimization to perform")
-    target_metric: str = Field(default="speed", description="Target performance metric")
-    parameters: dict[str, Any] = Field(
-        default={}, description="Optimization parameters"
-    )

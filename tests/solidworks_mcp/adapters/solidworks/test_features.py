@@ -3284,6 +3284,18 @@ def test_edge_pick_selects_with_select4_under_the_requested_mark() -> None:
     adapter.currentModel.ForceRebuild3.assert_called_once_with(True)
 
 
+def test_a_pick_inside_a_sketch_skips_the_rebuild() -> None:
+    """A rebuild would close the open sketch (seen live), so it can be skipped."""
+    edge = _Segment("e", (0.0, 0.0, 0.0), (0.01, 0.0, 0.0))
+    adapter = _picking_adapter([edge])
+
+    assert features._select_edge_by_coord(
+        adapter, 0.005, 0.0, 0.0, False, rebuild=False
+    )
+
+    adapter.currentModel.ForceRebuild3.assert_not_called()
+
+
 def test_edge_pick_refuses_a_point_that_is_on_no_edge() -> None:
     edge = _Segment("e", (0.0, 0.0, 0.0), (0.01, 0.0, 0.0))
     adapter = _picking_adapter([edge])
@@ -3472,6 +3484,18 @@ class TestAddFilletVolumeCheck:
         assert result.data.properties["volume_before"] == 4800.0
         assert result.data.properties["volume_after"] == 4797.4
 
+    @pytest.mark.asyncio
+    async def test_the_current_selection_is_not_rebuilt_away(self, monkeypatch) -> None:
+        """Reading the volume rebuilds, and a rebuild clears the selection."""
+        adapter = _build_adapter(monkeypatch)
+        adapter.get_mass_properties = AsyncMock()
+        monkeypatch.setattr(features, "_add_fillet_impl", lambda *_a: _fillet_feature())
+
+        result = await adapter.add_fillet(2.0, [])
+
+        assert result.is_success
+        adapter.get_mass_properties.assert_not_called()
+
     @pytest.mark.parametrize("volumes", [[None], [4800.0, None]])
     @pytest.mark.asyncio
     async def test_unreadable_volume_trusts_the_feature_count(
@@ -3621,3 +3645,75 @@ def test_select_revolve_inputs_names_an_axis_that_is_not_there(monkeypatch) -> N
 
     with pytest.raises(Exception, match="Axis 'Line1' is not a reference axis"):
         features._select_revolve_inputs(adapter, params)
+
+
+class TestScopedSuppression:
+    """Suppression in "all" or named configurations (SetSuppression2)."""
+
+    @staticmethod
+    def _adapter(monkeypatch, feature: Any, refreshed: Any, active: str) -> Any:
+        adapter = _build_adapter(monkeypatch)
+        adapter.currentModel = MagicMock()
+        adapter.currentModel.GetConfigurationNames.return_value = ("Default", "Long")
+        adapter.currentModel.GetActiveConfiguration.return_value = SimpleNamespace(
+            Name=active
+        )
+        adapter.currentModel.FeatureByName.side_effect = [feature, refreshed]
+        monkeypatch.setattr(
+            "solidworks_mcp.adapters.solidworks.configurations.string_array",
+            lambda names: tuple(names),
+        )
+        return adapter
+
+    def test_in_all_configurations(self, monkeypatch) -> None:
+        feature = _selectable_feature(
+            IsSuppressed=False, SetSuppression2=MagicMock(return_value=True)
+        )
+        adapter = self._adapter(
+            monkeypatch, feature, SimpleNamespace(IsSuppressed=True), "Default"
+        )
+
+        result = _suppress_feature_impl(adapter, "Fillet1", True, "all")
+
+        feature.SetSuppression2.assert_called_once_with(0, 2, ("Default", "Long"))
+        assert result.data["configurations"] == ["Default", "Long"]
+        assert result.data["suppressed"] is True
+
+    def test_only_in_another_configuration(self, monkeypatch) -> None:
+        """The active one keeps its state, so its read-back isn't checked."""
+        feature = _selectable_feature(
+            IsSuppressed=False, SetSuppression2=MagicMock(return_value=True)
+        )
+        adapter = self._adapter(
+            monkeypatch, feature, SimpleNamespace(IsSuppressed=False), "Default"
+        )
+
+        result = _suppress_feature_impl(adapter, "Fillet1", True, ["Long"])
+
+        feature.SetSuppression2.assert_called_once_with(0, 3, ("Long",))
+        assert result.is_success, result.error
+        assert result.data["suppressed"] is False
+
+    def test_in_the_active_one_by_name_is_checked(self, monkeypatch) -> None:
+        feature = _selectable_feature(
+            IsSuppressed=False, SetSuppression2=MagicMock(return_value=True)
+        )
+        adapter = self._adapter(
+            monkeypatch, feature, SimpleNamespace(IsSuppressed=False), "Long"
+        )
+
+        result = _suppress_feature_impl(adapter, "Fillet1", True, ["Long"])
+
+        assert "the feature state did not change" in (result.error or "")
+
+    def test_a_refusal_names_the_configurations(self, monkeypatch) -> None:
+        feature = _selectable_feature(
+            IsSuppressed=True, SetSuppression2=MagicMock(return_value=False)
+        )
+        adapter = self._adapter(monkeypatch, feature, None, "Default")
+
+        result = _suppress_feature_impl(adapter, "Fillet1", False, "all")
+
+        assert "SetSuppression2 refused to unsuppress Fillet1 in Default, Long" in (
+            result.error or ""
+        )

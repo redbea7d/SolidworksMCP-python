@@ -18,6 +18,13 @@ checking the result, and what doesn't work yet.
 - Call tools one at a time and wait for each result. The server pauses
   after every SolidWorks call on purpose: driving SolidWorks back-to-back
   crashes it.
+- If the tool list has `search_tools` and `call_tool` instead of the tools
+  below, the server is in search mode: search in plain words for each kind
+  of step ("sketch a rectangle", "extrude"), then run the tool it returns
+  with `call_tool`. The names in this skill are the names to search for.
+- A tool this skill names that isn't listed may be in a toolset the user
+  turned off (drawing, automation, vba, docs); say which, rather than
+  working around it.
 
 ## The build order
 
@@ -39,7 +46,7 @@ A solid feature always comes from a closed sketch:
 6. Then edge treatments: `select_face_edges`, then `add_fillet` or
    `add_chamfer` with empty `edge_names`.
 7. Finish with `verify_model` (see "Check the result").
-8. `set_material`, then `save_part` with a `file_path`.
+8. `set_material`, then `save_file` with a `file_path`.
 
 Repeat 2-5 for each feature. For holes in a ring or a row, draw every
 circle in one sketch (`sketch_circular_pattern`, `sketch_linear_pattern`)
@@ -61,7 +68,7 @@ Details and the model axes: [references/selection-and-units.md](references/selec
 - To treat the edges of one face, use `select_face_edges` (by `side`, a
   `point` in mm, or a `plane`), then `add_fillet` or `add_chamfer` with empty
   `edge_names`. Do it right before the fillet: anything that rebuilds or
-  selects in between (including `calculate_mass_properties`) clears the
+  selects in between (including `get_mass_properties`) clears the
   selection.
 - If the user says "this face" or "these edges", call
   `get_selected_entities` to read what they clicked rather than guessing.

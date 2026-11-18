@@ -283,6 +283,99 @@ async def test_list_model_dimensions_unknown_feature_is_not_found() -> None:
     assert "No dimensions found on feature 'Fillet9'" in result.error
 
 
+class _TreeFeature(_Feature):
+    """A feature with a type, for walks that skip folders."""
+
+    def __init__(self, name: str, kind: str, dims: list[Any]) -> None:
+        super().__init__(name, dims)
+        self._kind = kind
+
+    def GetTypeName2(self):  # noqa: N802 - COM name
+        return self._kind
+
+
+def _monitor_stand() -> SimpleNamespace:
+    """A part whose forward walk stops at the folders, as on the monitor stand.
+
+    The cut sketched on ``Plane1`` also reports the plane's offset.
+    """
+    tree = [
+        _TreeFeature("Comments", "CommentsFolder", [_dim("D9@Bogus@P.Part", 1.0)]),
+        _TreeFeature("Front Plane", "RefPlane", []),
+        _TreeFeature("Boss-Extrude1", "Extrusion", [_dim("D1@Boss-Extrude1", 20.0)]),
+        _TreeFeature("Plane1", "RefPlane", [_dim("D1@Plane1@Stand.Part", 20.0)]),
+        _TreeFeature(
+            "Cut-Extrude3",
+            "Cut",
+            [_dim("D1@Cut-Extrude3", 3.0), _dim("D1@Plane1@Stand.Part", 20.0)],
+        ),
+    ]
+    count = len(tree)
+    return SimpleNamespace(
+        GetType=lambda: 1,
+        FirstFeature=lambda: tree[0],  # its GetNextFeature is None: the walk stops
+        FeatureByPositionReverse=lambda pos: tree[count - pos - 1],
+        FeatureManager=SimpleNamespace(GetFeatureCount=lambda _all: count),
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_model_dimensions_finds_what_the_reverse_pass_finds() -> None:
+    result = await _Harness(_monitor_stand()).list_model_dimensions()
+
+    assert result.is_success
+    assert [(d["full_name"], d["feature"]) for d in result.data] == [
+        ("D1@Boss-Extrude1", "Boss-Extrude1"),
+        ("D1@Plane1", "Plane1"),
+        ("D1@Cut-Extrude3", "Cut-Extrude3"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_model_dimensions_for_a_cut_leaves_out_its_plane() -> None:
+    result = await _Harness(_monitor_stand()).list_model_dimensions("Cut-Extrude3")
+
+    assert [d["full_name"] for d in result.data] == ["D1@Cut-Extrude3"]
+
+
+@pytest.mark.asyncio
+async def test_list_model_dimensions_keeps_a_dimension_with_no_full_name() -> None:
+    nameless = SimpleNamespace(
+        FullName=None, Value=5.0, SystemValue=0.005, ReadOnly=True
+    )
+    feature = _Feature("Fillet1", [nameless, nameless])
+    model = SimpleNamespace(GetType=lambda: 1, FirstFeature=lambda: feature)
+
+    result = await _Harness(model).list_model_dimensions()
+
+    assert [(d["full_name"], d["feature"]) for d in result.data] == [
+        (None, "Fillet1"),
+        (None, "Fillet1"),
+    ]
+    assert result.data[0]["read_only"] is True
+
+
+@pytest.mark.parametrize(
+    ("full_name", "owner"),
+    [("D1@Plane1", "Plane1"), ("D1@Sketch@2", "Sketch@2"), ("D1", None), (None, None)],
+)
+def test_owning_feature(full_name, owner) -> None:
+    assert doc._owning_feature(full_name) == owner
+
+
+@pytest.mark.parametrize(
+    ("type_name", "folder"),
+    [
+        ("MaterialFolder", True),
+        ("DetailCabinet", True),
+        ("RefPlane", False),
+        ("Unknown", False),
+    ],
+)
+def test_is_folder(type_name, folder) -> None:
+    assert doc._is_folder(type_name) is folder
+
+
 # ---- measure_entities ---------------------------------------------------------
 
 
@@ -454,6 +547,8 @@ async def test_get_material_reads_the_assignment(raw, material, database) -> Non
         "material": material,
         "database": database,
         "density_kg_m3": None,  # no SolidWorks app to find the library through
+        "properties": {},
+        "source": "part",
         "configuration": "Default",
     }
 
@@ -714,6 +809,17 @@ async def test_export_flat_pattern_needs_a_sheet_metal_body(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_export_flat_pattern_needs_the_part_saved(tmp_path) -> None:
+    """ExportToDWG2 reads the part from its file (seen live)."""
+    part = _sheet_metal_part(True)
+    part.GetPathName = lambda: ""
+
+    result = await _Harness(part).export_flat_pattern(str(tmp_path / "x.dxf"))
+
+    assert "never been saved; save it with save_file" in result.error
+
+
+@pytest.mark.asyncio
 async def test_export_flat_pattern_reports_a_failed_export(tmp_path) -> None:
     result = await _Harness(_sheet_metal_part(True, writes=False)).export_flat_pattern(
         str(tmp_path / "x.dwg")
@@ -782,17 +888,24 @@ _DENSITIES = """<?xml version="1.0" encoding="UTF-16"?>
 <mstns:materials xmlns:mstns="http://www.solidworks.com/sldmaterials">
   <classification name="Steel">
     <material name="AISI 304">
-      <physicalproperties><DENS displayname="Mass density" value="8000"/></physicalproperties>
+      <physicalproperties>
+        <EX displayname="Elastic modulus" value="1.9E+11"/>
+        <NUXY displayname="Poisson's ratio" value="0.29"/>
+        <SIGYLD displayname="Yield strength" value="2.06807E+8"/>
+        <DENS displayname="Mass density" value="8000"/>
+        <C displayname="Specific heat" value="500"/>
+      </physicalproperties>
+      <cgshader name="Steel"/>
     </material>
-    <material name="Odd"><physicalproperties><DENS value="n/a"/></physicalproperties></material>
+    <material name="Odd"><physicalproperties><DENS value="n/a"/><KX value="47."/></physicalproperties></material>
     <material name="Bare"/>
   </classification>
 </mstns:materials>
 """
 
 
-def test_material_density_reads_the_dens_value(tmp_path) -> None:
-    """Libraries are UTF-16 XML; DENS holds kg/m³."""
+def test_material_entry_reads_each_property_in_si(tmp_path) -> None:
+    """Libraries are UTF-16 XML holding SI values; the named library comes first."""
     other = tmp_path / "custom.sldmat"
     other.write_text(_DENSITIES.replace("8000", "1"), encoding="utf-16")
     library = tmp_path / "solidworks materials.sldmat"
@@ -801,12 +914,30 @@ def test_material_density_reads_the_dens_value(tmp_path) -> None:
     broken.write_text("<not xml", encoding="utf-8")
     files = [str(broken), str(other), str(library)]
 
-    # The library the part names is searched first, whatever the order.
-    assert doc._material_density(files, "AISI 304", "SOLIDWORKS Materials") == 8000.0
-    assert doc._material_density(files, "AISI 304", "custom") == 1.0
-    assert doc._material_density(files, "Odd", "custom") is None
-    assert doc._material_density(files, "Bare", "custom") is None
-    assert doc._material_density(files, "Missing", "custom") is None
+    name, steel = doc._material_entry(files, "AISI 304", "SOLIDWORKS Materials")
+
+    assert name == "solidworks materials"
+    assert steel == {
+        "elastic_modulus": {"value": 1.9e11, "unit": "Pa", "label": "Elastic modulus"},
+        "poissons_ratio": {"value": 0.29, "unit": "", "label": "Poisson's ratio"},
+        "yield_strength": {"value": 2.06807e8, "unit": "Pa", "label": "Yield strength"},
+        "density": {"value": 8000.0, "unit": "kg/m^3", "label": "Mass density"},
+        "specific_heat": {"value": 500.0, "unit": "J/(kg*K)", "label": "Specific heat"},
+    }
+    assert doc._material_entry(files, "AISI 304", "custom")[1]["density"]["value"] == 1
+    # A value that isn't a number is left out, and a label defaults to the key.
+    assert doc._material_entry(files, "Odd", "custom") == (
+        "custom",
+        {
+            "thermal_conductivity": {
+                "value": 47.0,
+                "unit": "W/(m*K)",
+                "label": "thermal_conductivity",
+            }
+        },
+    )
+    assert doc._material_entry(files, "Bare", "")[1] == {}
+    assert doc._material_entry(files, "Missing", "custom") is None
 
 
 def test_library_files_lists_sldmat_files_in_each_folder(tmp_path) -> None:
@@ -830,3 +961,27 @@ async def test_get_material_reports_the_density_from_the_library(tmp_path) -> No
 
     assert result.data["material"] == "AISI 304"
     assert result.data["density_kg_m3"] == 8000.0
+    assert result.data["properties"]["elastic_modulus"]["value"] == 1.9e11
+    assert result.data["source"] == "part"
+
+
+@pytest.mark.asyncio
+async def test_a_library_material_is_read_with_no_document(tmp_path) -> None:
+    folder = tmp_path / "lib"
+    folder.mkdir()
+    (folder / "solidworks materials.sldmat").write_text(_DENSITIES, encoding="utf-16")
+    harness = _Harness(None, _app(str(folder)))
+
+    steel = await harness.get_material(material="AISI 304")
+    missing = await harness.get_material(material="Unobtainium", database="custom")
+    unconnected = await _Harness().get_material(material="AISI 304")
+
+    assert (steel.data["source"], steel.data["database"]) == (
+        "library",
+        "solidworks materials",
+    )
+    assert steel.data["properties"]["yield_strength"]["value"] == 2.06807e8
+    assert steel.data["density_kg_m3"] == 8000.0
+    assert "'Unobtainium' not found" in missing.error
+    assert "list_available_materials" in missing.error
+    assert "not found" in unconnected.error

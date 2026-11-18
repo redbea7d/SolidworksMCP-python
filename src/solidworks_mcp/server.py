@@ -1,6 +1,6 @@
 """Main SolidWorks MCP Server implementation using FastMCP and PydanticAI.
 
-This server provides 156 tools for comprehensive SolidWorks automation with configurable
+This server provides 134 tools for comprehensive SolidWorks automation with configurable
 deployment (local/remote) and security options.
 """
 
@@ -31,7 +31,8 @@ from .agents.history_db import insert_tool_event
 from .cache.response_cache import CachePolicy, ResponseCache
 from .config import DeploymentMode, SolidWorksMCPConfig, load_config
 from .exceptions import SolidWorksMCPError
-from .skills import SERVER_INSTRUCTIONS, SKILL_DIR
+from .skills import SKILL_DIR, server_instructions
+from .tools.toolsets import apply_tool_visibility
 from .version import __version__
 
 AGENT_SYSTEM_PROMPT = (
@@ -87,10 +88,12 @@ class SolidWorksMCPServer:
         """
         self.config = config
         self.state = MCPServerState(config=config)
+        self.toolsets = tuple(str(getattr(config, "toolsets", "all")).split(","))
+        self.tool_mode = str(getattr(config, "tool_mode", "list"))
         self.mcp = FastMCP(
             "SolidWorks MCP Server",
             version=__version__,
-            instructions=SERVER_INSTRUCTIONS,
+            instructions=server_instructions(self.toolsets, self.tool_mode),
         )
         # The usage skill, as skill:// resources; needs no SolidWorks connection.
         self.mcp.add_provider(SkillProvider(SKILL_DIR))
@@ -208,16 +211,9 @@ class SolidWorksMCPServer:
             "get_mass_properties",
             # Additional analysis operations
             "calculate_mass_properties",
-            "get_material_properties",
-            "analyze_geometry",
             "check_interference",
             # Drawing analysis operations
-            "analyze_drawing_comprehensive",
-            "analyze_drawing_dimensions",
-            "analyze_drawing_views",
-            "analyze_drawing_annotations",
-            "check_drawing_compliance",
-            "check_drawing_standards",
+            "check_drawing",
             "compare_drawing_versions",
             # Modeling operations that benefit from routing
             "create_assembly",
@@ -326,6 +322,14 @@ class SolidWorksMCPServer:
         # Register tools and derive canonical count from FastMCP runtime
         await tools.register_tools(self.mcp, self.adapter, self.config)
         self.state.tool_count = len(await self.mcp.list_tools())
+        # Every tool stays registered; the toolsets and mode change only what
+        # tools/list shows (queue item 14).
+        apply_tool_visibility(self.mcp, self.toolsets, self.tool_mode)
+        visible = len(await self.mcp.list_tools())
+        logger.info(
+            f"Listing {visible} tools: toolsets {', '.join(self.toolsets)}, "
+            f"{self.tool_mode} mode"
+        )
         self.server = self.mcp
 
         # Setup PydanticAI agent after tools are registered so the agent can bind
@@ -536,15 +540,12 @@ async def list_capabilities() -> dict[str, list[str]]:
             "add_section_view",
             "add_detail_view",
             "add_dimension_to_view",
-            "add_annotation",
             "create_drawing_template",
         ],
         "analysis": [
             "get_mass_properties",
             "perform_fea_analysis",
             "check_interference",
-            "analyze_geometry",
-            "get_material_properties",
         ],
         "export": [
             "export_step",
@@ -553,7 +554,6 @@ async def list_capabilities() -> dict[str, list[str]]:
             "export_pdf",
             "export_dwg",
             "export_images",
-            "batch_export",
         ],
         "automation": [
             "generate_vba_macro",

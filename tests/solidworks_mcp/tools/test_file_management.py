@@ -1,14 +1,14 @@
 """Tests for SolidWorks file management tools."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from solidworks_mcp.adapters.mock_adapter import MockSolidWorksAdapter
 from solidworks_mcp.tools.file_management import (
     ActivateDocumentInput,
-    FileOperationInput,
-    FormatConversionInput,
     SaveAsInput,
     SaveBodyAsPartInput,
     register_file_management_tools,
@@ -32,266 +32,6 @@ class TestFileManagementTools:
         # Ensure the reported tool count matches the number of tools actually registered
         registered_tool_names = {tool.name for tool in await mcp_server.list_tools()}
         assert tool_count == len(registered_tool_names)
-
-    @pytest.mark.asyncio
-    async def test_manage_file_properties_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful file property management."""
-        await register_file_management_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.manage_file_properties = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "properties_updated": 5,
-                    "custom_properties": {
-                        "Author": "Test User",
-                        "Description": "Test Part",
-                        "Material": "Steel",
-                        "PartNo": "SW-001",
-                        "Revision": "A",
-                    },
-                    "system_properties": {
-                        "Created": "2024-01-15",
-                        "Modified": "2024-03-15",
-                        "Size": "1.2 MB",
-                    },
-                },
-                execution_time=0.4,
-            )
-        )
-
-        input_data = FileOperationInput(
-            file_path="test_part.sldprt",
-            operation="get_properties",
-            parameters={"include_custom": True, "include_system": True},
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "manage_file_properties":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["properties_updated"] == 5
-        assert "Author" in result["data"]["custom_properties"]
-        assert "Created" in result["data"]["system_properties"]
-        mock_adapter.manage_file_properties.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_convert_file_format_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful file format conversion."""
-        await register_file_management_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.convert_file_format = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "source_file": "test_part.sldprt",
-                    "target_file": "test_part.step",
-                    "format_from": "SLDPRT",
-                    "format_to": "STEP",
-                    "file_size": "2.1 MB",
-                    "conversion_time": 1.8,
-                },
-                execution_time=1.8,
-            )
-        )
-
-        input_data = FormatConversionInput(
-            source_file="test_part.sldprt",
-            target_format="STEP",
-            output_path="exports/test_part.step",
-            conversion_options={"quality": "high", "units": "mm"},
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "convert_file_format":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["format_to"] == "STEP"
-        assert result["data"]["target_file"] == "test_part.step"
-        mock_adapter.convert_file_format.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_batch_file_operations_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful batch file operations."""
-        await register_file_management_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.batch_file_operations = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "total_files": 3,
-                    "processed_files": 3,
-                    "failed_files": 0,
-                    "results": [
-                        {
-                            "file": "part1.sldprt",
-                            "status": "success",
-                            "operation": "backup",
-                        },
-                        {
-                            "file": "part2.sldprt",
-                            "status": "success",
-                            "operation": "backup",
-                        },
-                        {
-                            "file": "assembly1.sldasm",
-                            "status": "success",
-                            "operation": "backup",
-                        },
-                    ],
-                    "processing_time": 2.5,
-                },
-                execution_time=2.5,
-            )
-        )
-
-        input_data = FileOperationInput(
-            file_path="./parts/",
-            operation="batch_backup",
-            parameters={
-                "target_directory": "./backups/",
-                "include_subdirectories": True,
-                "file_pattern": "*.sld*",
-            },
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "batch_file_operations":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["total_files"] == 3
-        assert result["data"]["failed_files"] == 0
-        mock_adapter.batch_file_operations.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_file_properties_error_handling(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test error handling in file property management."""
-        await register_file_management_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.manage_file_properties = AsyncMock(
-            return_value=Mock(
-                is_success=False,
-                error="File is read-only or locked",
-                execution_time=0.1,
-            )
-        )
-
-        input_data = FileOperationInput(
-            file_path="locked_part.sldprt",
-            operation="set_properties",
-            parameters={"Author": "New User"},
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "manage_file_properties":
-                tool_func = tool.fn
-                break
-
-        result = await tool_func(input_data=input_data)
-        assert result["status"] == "error"
-        assert "read-only or locked" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_format_conversion_error_handling(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test error handling in format conversion."""
-        await register_file_management_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.convert_file_format = AsyncMock(
-            return_value=Mock(
-                is_success=False, error="Unsupported target format", execution_time=0.1
-            )
-        )
-
-        input_data = FormatConversionInput(
-            source_file="test_part.sldprt", target_format="INVALID_FORMAT"
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "convert_file_format":
-                tool_func = tool.fn
-                break
-
-        result = await tool_func(input_data=input_data)
-        assert result["status"] == "error"
-        assert "Unsupported target format" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_file_management_tools_refuse_without_adapter_methods(
-        self, mcp_server, mock_config
-    ):
-        """Tools refuse rather than inventing a result when the adapter has
-        no specialized methods."""
-        adapter_without_methods = object()
-        await register_file_management_tools(
-            mcp_server, adapter_without_methods, mock_config
-        )
-
-        manage_tool = None
-        convert_tool = None
-        batch_tool = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "manage_file_properties":
-                manage_tool = tool.fn
-            if tool.name == "convert_file_format":
-                convert_tool = tool.fn
-            if tool.name == "batch_file_operations":
-                batch_tool = tool.fn
-
-        assert manage_tool is not None
-        assert convert_tool is not None
-        assert batch_tool is not None
-
-        manage_result = await manage_tool(
-            input_data=FileOperationInput(file_path="demo.sldprt", operation="rename")
-        )
-        assert manage_result["status"] == "error"
-        assert "does not support manage_file_properties" in manage_result["message"]
-
-        convert_result = await convert_tool(
-            input_data=FormatConversionInput(
-                source_file="demo.sldprt",
-                target_file="demo.step",
-                target_format="STEP",
-            )
-        )
-        assert convert_result["status"] == "error"
-        assert "does not support convert_file_format" in convert_result["message"]
-
-        batch_result = await batch_tool(
-            input_data=FileOperationInput(file_path="./parts", operation="batch")
-        )
-        assert batch_result["status"] == "error"
-        assert "does not support batch_file_operations" in batch_result["message"]
 
     @pytest.mark.asyncio
     async def test_list_open_documents_success(
@@ -756,122 +496,6 @@ class TestFileManagementTools:
         assert result["error_type"] == "internal"
 
     @pytest.mark.asyncio
-    async def test_batch_file_operations_adapter_error_path(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Cover batch_file_operations branch when adapter returns non-success."""
-        await register_file_management_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.batch_file_operations = AsyncMock(
-            return_value=Mock(is_success=False, error="batch rejected")
-        )
-
-        batch_tool = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "batch_file_operations":
-                batch_tool = tool.fn
-                break
-
-        assert batch_tool is not None
-        result = await batch_tool(
-            input_data=FileOperationInput(file_path="./parts", operation="batch")
-        )
-        assert result["status"] == "error"
-        assert "batch rejected" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_manage_convert_batch_exception_paths(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test exception branches for manage/convert/batch file operations."""
-        await register_file_management_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.manage_file_properties = AsyncMock(
-            side_effect=RuntimeError("properties crash")
-        )
-        mock_adapter.convert_file_format = AsyncMock(
-            side_effect=RuntimeError("conversion crash")
-        )
-        mock_adapter.batch_file_operations = AsyncMock(
-            side_effect=RuntimeError("batch crash")
-        )
-
-        manage_tool = None
-        convert_tool = None
-        batch_tool = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "manage_file_properties":
-                manage_tool = tool.fn
-            if tool.name == "convert_file_format":
-                convert_tool = tool.fn
-            if tool.name == "batch_file_operations":
-                batch_tool = tool.fn
-
-        assert manage_tool is not None
-        assert convert_tool is not None
-        assert batch_tool is not None
-
-        manage_result = await manage_tool(
-            input_data=FileOperationInput(file_path="x.sldprt", operation="rename")
-        )
-        assert manage_result["status"] == "error"
-        assert manage_result["error_type"] == "internal"
-
-        convert_result = await convert_tool(
-            input_data=FormatConversionInput(
-                source_file="x.sldprt",
-                target_file="x.step",
-                target_format="STEP",
-            )
-        )
-        assert convert_result["status"] == "error"
-        assert convert_result["error_type"] == "internal"
-
-        batch_result = await batch_tool(
-            input_data=FileOperationInput(file_path="./parts", operation="batch")
-        )
-        assert batch_result["status"] == "error"
-        assert batch_result["error_type"] == "internal"
-
-    @pytest.mark.unit
-    def test_file_operation_input_validation(self):
-        """Test input validation for file operations."""
-        # Valid input
-        valid_input = FileOperationInput(
-            file_path="test.sldprt", operation="get_properties"
-        )
-        assert valid_input.file_path == "test.sldprt"
-        assert valid_input.operation == "get_properties"
-
-        # Test with parameters
-        input_with_params = FileOperationInput(
-            file_path="test.sldprt",
-            operation="set_properties",
-            parameters={"Author": "Test User"},
-        )
-        assert input_with_params.parameters == {"Author": "Test User"}
-
-    @pytest.mark.unit
-    def test_format_conversion_input_validation(self):
-        """Test input validation for format conversion."""
-        # Valid input
-        valid_input = FormatConversionInput(
-            source_file="test.sldprt", target_format="STEP"
-        )
-        assert valid_input.source_file == "test.sldprt"
-        assert valid_input.target_format == "STEP"
-
-        # Test with optional parameters
-        full_input = FormatConversionInput(
-            source_file="test.sldprt",
-            target_format="IGES",
-            output_path="exports/test.igs",
-            conversion_options={"units": "mm", "precision": "high"},
-        )
-        assert full_input.output_path == "exports/test.igs"
-        assert full_input.conversion_options["units"] == "mm"
-
-    @pytest.mark.asyncio
     async def test_get_model_info_list_features_list_configurations_paths(
         self, mcp_server, mock_adapter, mock_config
     ):
@@ -1123,6 +747,15 @@ class TestFileManagementTools:
         mock_adapter.list_features = AsyncMock(side_effect=RuntimeError("explode"))
         exception_result = await classify_tool(input_data={})
         assert exception_result["status"] == "error"
+
+        # Nothing open: fail, never classify an empty model.
+        mock_adapter.get_model_info = AsyncMock(
+            return_value=Mock(is_success=False, error="No active model")
+        )
+        nothing_open = await classify_tool(input_data={})
+        assert nothing_open["status"] == "error"
+        assert nothing_open["error_type"] == "no_active_document"
+        assert "Failed to read the model to classify" in nothing_open["message"]
 
     @pytest.mark.asyncio
     async def test_load_part_and_load_assembly_paths(
@@ -1563,7 +1196,12 @@ class TestFileManagementTools:
         assert configs_result["status"] == "error"
         assert "does not support list_configurations" in configs_result["message"]
         assert classify_result["status"] == "error"
-        assert "does not support list_features" in classify_result["message"]
+        assert "does not support get_model_info" in classify_result["message"]
+        # With model_info passed, it still needs the feature tree.
+        classify_features = await classify_tool(
+            input_data={"model_info": {"type": "Part"}}
+        )
+        assert "does not support list_features" in classify_features["message"]
 
     @pytest.mark.asyncio
     async def test_load_tools_result_value_defaults_with_sparse_payloads(
@@ -1593,7 +1231,7 @@ class TestFileManagementTools:
         assert part_none_data["status"] == "success"
         assert part_none_data["model"]["name"] == "C:/tmp/a.sldprt"
         assert part_none_data["model"]["path"] == "C:/tmp/a.sldprt"
-        assert part_none_data["model"]["configuration"] == "Default"
+        assert part_none_data["model"]["configuration"] is None  # never assumed
 
         # Sparse object payload with None values -> _result_value falls through keys/default.
         sparse_model = Mock()
@@ -1612,7 +1250,7 @@ class TestFileManagementTools:
         assert asm_sparse["status"] == "success"
         assert asm_sparse["model"]["name"] == "C:/tmp/a.sldasm"
         assert asm_sparse["model"]["path"] == "C:/tmp/a.sldasm"
-        assert asm_sparse["model"]["configuration"] == "Default"
+        assert asm_sparse["model"]["configuration"] is None
 
         # Dict payload with only None fields exercises dict fallback return-default path.
         mock_adapter.open_model = AsyncMock(
@@ -1804,10 +1442,10 @@ class TestFileManagementTools:
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_pack_and_go_none_input_creates_empty_and_errors(
+    async def test_pack_and_go_requires_both_paths(
         self, mcp_server, mock_adapter, mock_config, tmp_path
     ):
-        """pack_and_go_assembly with None input falls through to source-not-found error."""
+        """No input, or an empty one: invalid_input naming what is missing."""
         await register_file_management_tools(mcp_server, mock_adapter, mock_config)
 
         pack_tool = None
@@ -1817,15 +1455,13 @@ class TestFileManagementTools:
 
         assert pack_tool is not None
 
-        # None input → PackAndGoInput(source_path="", target_dir="").
-        # Path("") resolves to the current directory on Windows (exists=True),
-        # so the .sldasm extension check fires before the source-not-found check.
-        result = await pack_tool(input_data=None)
-        assert result["status"] == "error"
-        assert (
-            "sldasm" in result["message"].lower()
-            or "not found" in result["message"].lower()
-        )
+        nothing = await pack_tool(input_data=None)
+        assert nothing["error_type"] == "invalid_input"
+
+        empty = await pack_tool(input_data={})
+        assert empty["error_type"] == "invalid_input"
+        assert "source_path" in empty["message"]
+        assert "target_dir" in empty["message"]
 
     @pytest.mark.asyncio
     async def test_pack_and_go_source_not_found(
@@ -1939,6 +1575,44 @@ class TestFileManagementTools:
         assert "pack failed" in result["message"]
 
     @pytest.mark.asyncio
+    async def test_pack_and_go_warns_about_unsaved_changes(
+        self, mcp_server, mock_adapter, mock_config, tmp_path
+    ):
+        """The copy is of the saved files: open files with changes are named,
+        alongside a preview that couldn't be written."""
+        await register_file_management_tools(mcp_server, mock_adapter, mock_config)
+        tools = {t.name: t.fn for t in await mcp_server.list_tools()}
+        source = tmp_path / "box.sldasm"
+        source.write_text("asm", encoding="utf-8")
+        mock_adapter.pack_and_go_assembly = AsyncMock(
+            return_value=Mock(
+                is_success=True,
+                data={"copied_files": [], "unsaved_changes": ["plate.sldprt"]},
+                execution_time=0.5,
+            )
+        )
+        mock_adapter.export_image = AsyncMock(
+            return_value=Mock(is_success=False, error="no graphics window")
+        )
+
+        result = await tools["pack_and_go_assembly"](
+            input_data={
+                "source_path": str(source),
+                "target_dir": str(tmp_path / "out"),
+                "overwrite": True,
+                "export_preview": True,
+            }
+        )
+
+        assert result["status"] == "success"
+        assert result["method"] == "dependency_copy"
+        assert result["warning"].startswith(
+            "plate.sldprt had unsaved changes, which are not in the copy; save, "
+            "then pack again to include them. The copy is complete, but the "
+            "preview couldn't be written: no graphics window"
+        )
+
+    @pytest.mark.asyncio
     async def test_pack_and_go_success_without_preview(
         self, mcp_server, mock_adapter, mock_config, tmp_path
     ):
@@ -1972,7 +1646,7 @@ class TestFileManagementTools:
             }
         )
         assert result["status"] == "success"
-        assert result["method"] == "native_pack_and_go"
+        assert result["method"] == "dependency_copy"
         assert "preview_image" not in result
 
     @pytest.mark.asyncio
@@ -2038,7 +1712,9 @@ class TestFileManagementTools:
                 execution_time=0.5,
             )
         )
-        mock_adapter.export_image = AsyncMock(return_value=Mock(is_success=False))
+        mock_adapter.export_image = AsyncMock(
+            return_value=Mock(is_success=False, error="no graphics window")
+        )
 
         result = await pack_tool(
             input_data={
@@ -2050,6 +1726,10 @@ class TestFileManagementTools:
         )
         assert result["status"] == "success"
         assert result["preview_image"] is None
+        assert result["warning"].startswith(
+            "The copy is complete, but the preview couldn't be written: "
+            "no graphics window"
+        )
 
     @pytest.mark.asyncio
     async def test_pack_and_go_exception(
@@ -2313,3 +1993,206 @@ async def test_save_file_refuses_force_save(
     assert result["error_type"] == "invalid_input"
     assert "the tool always saves" in result["message"]
     mock_adapter.save_file.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_file_properties_reports_a_failed_model_read(mcp_server, mock_config):
+    """The adapter can't read the active document: the error says why."""
+    adapter = Mock()
+    adapter.get_model_info = AsyncMock(
+        return_value=Mock(is_success=False, error="No active model", data=None)
+    )
+    await register_file_management_tools(mcp_server, adapter, mock_config)
+    tool = next(
+        t.fn for t in await mcp_server.list_tools() if t.name == "get_file_properties"
+    )
+
+    result = await tool()
+
+    assert result["status"] == "error"
+    assert "No active model" in result["message"]
+
+
+def _info(doc_type: str | None, path: str = "") -> Mock:
+    """A successful get_model_info result for a document of ``doc_type``."""
+    return Mock(
+        is_success=True,
+        data={"type": doc_type, "path": path, "title": "Doc"},
+        error=None,
+        execution_time=0.0,
+    )
+
+
+async def _save_file_tool(mcp_server, mock_config, adapter: Mock) -> Any:
+    await register_file_management_tools(mcp_server, adapter, mock_config)
+    return next(t.fn for t in await mcp_server.list_tools() if t.name == "save_file")
+
+
+def _save_adapter(doc_type: str | None = "Part") -> Mock:
+    adapter = Mock()
+    adapter.get_model_info = AsyncMock(return_value=_info(doc_type))
+    adapter.save_file = AsyncMock(
+        return_value=Mock(is_success=True, data=None, error=None, execution_time=0.0)
+    )
+    return adapter
+
+
+@pytest.mark.asyncio
+async def test_save_file_to_a_new_path(mcp_server, mock_config, tmp_path) -> None:
+    adapter = _save_adapter("Part")
+    save = await _save_file_tool(mcp_server, mock_config, adapter)
+    target = tmp_path / "bracket.sldprt"
+
+    result = await save(input_data={"file_path": str(target)})
+
+    assert result["status"] == "success"
+    assert result["file_path"] == str(target)
+    adapter.save_file.assert_awaited_once_with(str(target))
+
+
+@pytest.mark.asyncio
+async def test_save_file_refuses_a_missing_folder(
+    mcp_server, mock_config, tmp_path
+) -> None:
+    adapter = _save_adapter("Part")
+    save = await _save_file_tool(mcp_server, mock_config, adapter)
+    folder = tmp_path / "no" / "such"
+
+    result = await save(input_data={"file_path": str(folder / "bracket.sldprt")})
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "invalid_input"
+    assert str(folder) in result["message"]
+    adapter.save_file.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_save_file_refuses_the_wrong_extension(
+    mcp_server, mock_config, tmp_path
+) -> None:
+    adapter = _save_adapter("Assembly")
+    save = await _save_file_tool(mcp_server, mock_config, adapter)
+
+    result = await save(input_data={"file_path": str(tmp_path / "frame.sldprt")})
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "invalid_input"
+    assert ".sldasm" in result["message"]
+    adapter.save_file.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_save_file_keeps_an_existing_file_unless_overwrite(
+    mcp_server, mock_config, tmp_path
+) -> None:
+    adapter = _save_adapter("Part")
+    save = await _save_file_tool(mcp_server, mock_config, adapter)
+    target = tmp_path / "bracket.sldprt"
+    target.write_text("old", encoding="utf-8")
+
+    kept = await save(input_data={"file_path": str(target)})
+    replaced = await save(input_data={"file_path": str(target), "overwrite": True})
+
+    assert kept["status"] == "error"
+    assert kept["error_type"] == "invalid_input"
+    assert "overwrite" in kept["message"]
+    assert replaced["status"] == "success"
+    adapter.save_file.assert_awaited_once_with(str(target))
+
+
+@pytest.mark.asyncio
+async def test_save_file_in_place_skips_the_checks(mcp_server, mock_config) -> None:
+    adapter = _save_adapter(None)
+    save = await _save_file_tool(mcp_server, mock_config, adapter)
+
+    result = await save(input_data={})
+
+    assert result["status"] == "success"
+    assert "file_path" not in result
+    adapter.get_model_info.assert_not_awaited()
+    adapter.save_file.assert_awaited_once_with(None)
+
+
+@pytest.mark.asyncio
+async def test_save_file_needs_the_document_type_for_a_new_path(
+    mcp_server, mock_config, tmp_path
+) -> None:
+    adapter = _save_adapter("Unknown")
+    save = await _save_file_tool(mcp_server, mock_config, adapter)
+
+    result = await save(input_data={"file_path": str(tmp_path / "x.sldprt")})
+
+    assert result["status"] == "error"
+    assert "active document's type" in result["message"]
+    adapter.save_file.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_save_file_reports_a_failed_type_read(
+    mcp_server, mock_config, tmp_path
+) -> None:
+    adapter = _save_adapter("Part")
+    adapter.get_model_info = AsyncMock(
+        return_value=Mock(is_success=False, data=None, error="No active model")
+    )
+    save = await _save_file_tool(mcp_server, mock_config, adapter)
+
+    result = await save(input_data={"file_path": str(tmp_path / "x.sldprt")})
+
+    assert result["status"] == "error"
+    assert "No active model" in result["message"]
+
+
+async def _model_info_tool(mcp_server, mock_config, adapter: Mock) -> Any:
+    await register_file_management_tools(mcp_server, adapter, mock_config)
+    return next(
+        t.fn for t in await mcp_server.list_tools() if t.name == "get_model_info"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_model_info_reports_a_saved_file(
+    mcp_server, mock_config, tmp_path
+) -> None:
+    saved = tmp_path / "bracket.sldprt"
+    saved.write_bytes(b"x" * 42)
+    adapter = Mock()
+    adapter.get_model_info = AsyncMock(return_value=_info("Part", str(saved)))
+    info_tool = await _model_info_tool(mcp_server, mock_config, adapter)
+
+    info = (await info_tool())["model_info"]
+
+    assert info["size_bytes"] == 42
+    assert info["created"] > 0
+    assert info["modified"] > 0
+    assert info["type"] == "Part"
+
+
+@pytest.mark.asyncio
+async def test_get_model_info_on_an_unsaved_part(mcp_server, mock_config) -> None:
+    adapter = Mock()
+    adapter.get_model_info = AsyncMock(return_value=_info("Part", ""))
+    info_tool = await _model_info_tool(mcp_server, mock_config, adapter)
+
+    result = await info_tool()
+
+    assert result["status"] == "success"
+    assert result["model_info"]["size_bytes"] is None
+    assert result["model_info"]["created"] is None
+    assert result["model_info"]["modified"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_model_info_on_the_mock_adapter_has_no_file(
+    mcp_server, mock_config
+) -> None:
+    """A new mock part's ``Mock://`` path is no file, so the details are null."""
+    adapter = MockSolidWorksAdapter({})
+    await adapter.connect()
+    await adapter.create_part()
+    info_tool = await _model_info_tool(mcp_server, mock_config, adapter)
+
+    info = (await info_tool())["model_info"]
+
+    assert info["path"].startswith("Mock://")
+    assert info["size_bytes"] is None

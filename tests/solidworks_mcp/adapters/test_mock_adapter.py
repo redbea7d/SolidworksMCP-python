@@ -123,7 +123,7 @@ class TestMockAdapterCoveragePush:
             source_path=str(source), target_dir=str(out_dir)
         )
         assert result.is_success
-        assert result.data["all_files_saved"] is True
+        assert result.data["unsaved_changes"] == []
         assert len(result.data["copied_files"]) >= 1
 
     @pytest.mark.asyncio
@@ -423,6 +423,9 @@ class TestMockAdapterSuccessPaths:
         result = await adapter.list_features(include_suppressed=False)
         assert result.status == AdapterResultStatus.SUCCESS
         assert isinstance(result.data, list)
+        positions = [row["position"] for row in result.data]
+        assert positions == sorted(positions)
+        assert result.data[-1]["name"].startswith("Boss-Extrude")
 
     @pytest.mark.asyncio
     async def test_list_features_seeded_when_empty(self):
@@ -435,6 +438,7 @@ class TestMockAdapterSuccessPaths:
         assert result.status == AdapterResultStatus.SUCCESS
         assert len(result.data) > 0
         assert any(f["name"] == "Origin" for f in result.data)
+        assert [f["position"] for f in result.data] == list(range(len(result.data)))
 
     @pytest.mark.asyncio
     async def test_list_configurations_non_default_config(self):

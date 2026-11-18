@@ -7,20 +7,12 @@ import pytest
 
 from solidworks_mcp.adapters.base import AdapterResult, AdapterResultStatus
 from solidworks_mcp.tools.drawing import (
-    AddDimensionInput,
-    AddNoteInput,
-    AnnotationInput,
     AutoCenterMarksInput,
-    CreateDetailViewInput,
-    CreateDrawingViewInput,
-    CreateSectionViewInput,
     DimensionInput,
     DrawingCreationInput,
     DrawingViewInput,
-    UpdateSheetFormatInput,
     register_drawing_tools,
 )
-from solidworks_mcp.tools.drawing import AddDimensionInput as DrawingAddDimensionInput
 
 
 class TestDrawingTools:
@@ -113,133 +105,6 @@ class TestDrawingTools:
         assert result["data"]["view_name"] == "Detail A"
         assert result["data"]["scale"] == "2:1"
         mock_adapter.add_drawing_view.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_add_dimension_success(self, mcp_server, mock_adapter, mock_config):
-        """Test successful dimension addition."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.add_dimension = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "dimension_type": "Linear",
-                    "dimension_value": "25.00",
-                    "dimension_unit": "mm",
-                    "position": [75.0, 45.0],
-                    "tolerance": "±0.1",
-                },
-                execution_time=0.3,
-            )
-        )
-
-        input_data = DimensionInput(
-            drawing_path="part_drawing.slddrw",
-            dimension_type="Linear",
-            entities=["Line1", "Line2"],
-            position=[75.0, 45.0],
-            tolerance="±0.1",
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "add_dimension":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["dimension_value"] == "25.00"
-        assert result["data"]["tolerance"] == "±0.1"
-        mock_adapter.add_dimension.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_add_annotation_success(self, mcp_server, mock_adapter, mock_config):
-        """Test successful annotation addition."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.add_annotation = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "annotation_text": "Material: Steel AISI 1020",
-                    "annotation_type": "Note",
-                    "position": [200.0, 280.0],
-                    "font_size": 12,
-                    "leader_attached": False,
-                },
-                execution_time=0.2,
-            )
-        )
-
-        input_data = AnnotationInput(
-            drawing_path="part_drawing.slddrw",
-            annotation_type="Note",
-            text="Material: Steel AISI 1020",
-            position=[200.0, 280.0],
-            font_size=12,
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "add_annotation":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["annotation_text"] == "Material: Steel AISI 1020"
-        assert result["data"]["font_size"] == 12
-        mock_adapter.add_annotation.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_update_title_block_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful title block update."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.update_title_block = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "title": "Test Part Drawing",
-                    "part_number": "SW-001-A",
-                    "revision": "REV A",
-                    "drawn_by": "Engineer",
-                    "checked_by": "Manager",
-                    "date": "2024-03-15",
-                },
-                execution_time=0.4,
-            )
-        )
-
-        input_data = {
-            "drawing_path": "part_drawing.slddrw",
-            "title": "Test Part Drawing",
-            "part_number": "SW-001-A",
-            "revision": "REV A",
-            "drawn_by": "Engineer",
-            "checked_by": "Manager",
-        }
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "update_title_block":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["title"] == "Test Part Drawing"
-        assert result["data"]["revision"] == "REV A"
-        mock_adapter.update_title_block.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_drawing_creation_error_handling(
@@ -438,17 +303,6 @@ class TestDrawingTools:
         assert valid_input.dimension_type == "Linear"
         assert len(valid_input.entities) == 2
 
-    @pytest.mark.unit
-    def test_annotation_input_validation(self):
-        """Test input validation for annotation operations."""
-        # Valid input
-        valid_input = AnnotationInput(
-            drawing_path="test.slddrw", annotation_type="Note", text="Test note"
-        )
-        assert valid_input.drawing_path == "test.slddrw"
-        assert valid_input.annotation_type == "Note"
-        assert valid_input.text == "Test note"
-
 
 class TestDrawingToolsBranchCoverage:
     """Branch coverage for uncovered drawing tool paths."""
@@ -478,66 +332,7 @@ class TestDrawingToolsBranchCoverage:
         assert inp.entity2 is None
         assert inp.position_x == 5.0
 
-    def test_annotation_input_position_normalization(self):
-        """AnnotationInput.model_post_init extracts position_x/y from position list."""
-        inp = AnnotationInput(
-            annotation_type="Note",
-            text="Hello",
-            position=[30.0, 40.0],
-        )
-        assert inp.position_x == 30.0
-        assert inp.position_y == 40.0
-
     # ── add_dimension: simulation path + exception ───────────────────────
-
-    @pytest.mark.asyncio
-    async def test_add_dimension_simulation_no_adapter_method(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Add_dimension refuses rather than inventing a dimension when the
-        adapter has no add_dimension capability."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-        # Verify adapter does NOT have add_dimension; if it does, delete it.
-        if hasattr(mock_adapter, "add_dimension"):
-            del mock_adapter.add_dimension
-
-        tool_func = next(
-            (t.fn for t in await mcp_server.list_tools() if t.name == "add_dimension"),
-            None,
-        )
-        assert tool_func is not None
-
-        input_data = AddDimensionInput(
-            dimension_type="linear",
-            entity1="Line1",
-            position_x=50.0,
-            position_y=60.0,
-        )
-        result = await tool_func(input_data=input_data)
-        assert result["status"] == "error"
-        assert "does not support add_dimension" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_add_dimension_adapter_error_path(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Add_dimension returns error when adapter.add_dimension returns is_success=False."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-        mock_adapter.add_dimension = AsyncMock(
-            return_value=Mock(is_success=False, error="dim failed", execution_time=0.1)
-        )
-        tool_func = next(
-            (t.fn for t in await mcp_server.list_tools() if t.name == "add_dimension"),
-            None,
-        )
-        input_data = AddDimensionInput(
-            dimension_type="linear",
-            entity1="Line1",
-            position_x=50.0,
-            position_y=60.0,
-        )
-        result = await tool_func(input_data=input_data)
-        assert result["status"] == "error"
 
     # ── create_technical_drawing: no-adapter path with auto_populate_views=False ──
 
@@ -634,56 +429,6 @@ class TestDrawingToolsBranchCoverage:
         assert result["status"] == "error"
         assert "add_drawing_view" in result["message"]
 
-    # ── add_annotation: adapter error + no-adapter simulation paths ────────
-
-    @pytest.mark.asyncio
-    async def test_add_annotation_adapter_error(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Add_annotation returns error when adapter.add_annotation returns is_success=False."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-        mock_adapter.add_annotation = AsyncMock(
-            return_value=Mock(
-                is_success=False, error="annotation failed", execution_time=0.1
-            )
-        )
-        input_data = AnnotationInput(
-            annotation_type="Note",
-            text="Test",
-            position_x=10.0,
-            position_y=20.0,
-        )
-        tool_func = next(
-            (t.fn for t in await mcp_server.list_tools() if t.name == "add_annotation"),
-            None,
-        )
-        result = await tool_func(input_data=input_data)
-        assert result["status"] == "error"
-
-    @pytest.mark.asyncio
-    async def test_add_annotation_no_adapter_simulation(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Add_annotation refuses when adapter lacks add_annotation, rather
-        than inventing an annotation."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-        if hasattr(mock_adapter, "add_annotation"):
-            del mock_adapter.add_annotation
-
-        input_data = AnnotationInput(
-            annotation_type="Note",
-            text="MaterialSpec",
-            position_x=100.0,
-            position_y=200.0,
-        )
-        tool_func = next(
-            (t.fn for t in await mcp_server.list_tools() if t.name == "add_annotation"),
-            None,
-        )
-        result = await tool_func(input_data=input_data)
-        assert result["status"] == "error"
-        assert "does not support add_annotation" in result["message"]
-
     # ── update_title_block: adapter error + no-adapter paths ───────────────
 
     @pytest.mark.asyncio
@@ -710,320 +455,7 @@ class TestDrawingToolsBranchCoverage:
         )
         assert result["status"] == "error"
 
-    @pytest.mark.asyncio
-    async def test_update_title_block_no_adapter_simulation(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Update_title_block refuses when adapter lacks the method, rather
-        than echoing the input back as a claimed success."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-        if hasattr(mock_adapter, "update_title_block"):
-            del mock_adapter.update_title_block
-
-        payload = {"drawing_path": "d.slddrw", "title": "Widget", "revision": "A"}
-        tool_func = next(
-            (
-                t.fn
-                for t in await mcp_server.list_tools()
-                if t.name == "update_title_block"
-            ),
-            None,
-        )
-        result = await tool_func(input_data=payload)
-        assert result["status"] == "error"
-        assert "does not support update_title_block" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_typed_drawing_tools_default_error_messages(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Covers fallback error message branches when adapter returns no error text."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.create_technical_drawing = AsyncMock(
-            return_value=Mock(is_success=False, error=None, execution_time=0.1)
-        )
-        mock_adapter.add_drawing_view = AsyncMock(
-            return_value=Mock(is_success=False, error=None, execution_time=0.1)
-        )
-        mock_adapter.add_annotation = AsyncMock(
-            return_value=Mock(is_success=False, error=None, execution_time=0.1)
-        )
-        mock_adapter.update_title_block = AsyncMock(
-            return_value=Mock(is_success=False, error=None, execution_time=0.1)
-        )
-
-        by_name = {t.name: t.fn for t in await mcp_server.list_tools()}
-
-        r1 = await by_name["create_technical_drawing"](
-            input_data=DrawingCreationInput(model_file="part.sldprt")
-        )
-        r2 = await by_name["add_drawing_view"](
-            input_data=DrawingViewInput(
-                drawing_path="d.slddrw",
-                view_type="Front",
-                view_name="Front",
-            )
-        )
-        r3 = await by_name["add_annotation"](
-            input_data=AnnotationInput(
-                annotation_type="Note",
-                text="x",
-                position_x=1.0,
-                position_y=2.0,
-            )
-        )
-        r4 = await by_name["update_title_block"](input_data={"title": "Widget"})
-
-        assert r1["status"] == "error"
-        assert r1["message"] == "Failed to create technical drawing"
-        assert r2["status"] == "error"
-        assert r2["message"] == "Failed to add drawing view"
-        assert r3["status"] == "error"
-        assert r3["message"] == "Failed to add annotation"
-        assert r4["status"] == "error"
-        assert r4["message"] == "Failed to update title block"
-
-    @pytest.mark.asyncio
-    async def test_typed_drawing_tools_exception_paths(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Cover exception handlers for typed drawing tools."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.create_technical_drawing = AsyncMock(
-            side_effect=RuntimeError("create boom")
-        )
-        mock_adapter.add_drawing_view = AsyncMock(side_effect=RuntimeError("view boom"))
-        mock_adapter.add_annotation = AsyncMock(side_effect=RuntimeError("note boom"))
-        mock_adapter.update_title_block = AsyncMock(
-            side_effect=RuntimeError("title boom")
-        )
-
-        by_name = {t.name: t.fn for t in await mcp_server.list_tools()}
-
-        r1 = await by_name["create_technical_drawing"](
-            input_data=DrawingCreationInput(model_file="part.sldprt")
-        )
-        r2 = await by_name["add_drawing_view"](
-            input_data=DrawingViewInput(
-                drawing_path="d.slddrw",
-                view_type="Front",
-                view_name="Front",
-            )
-        )
-        r3 = await by_name["add_annotation"](
-            input_data=AnnotationInput(
-                annotation_type="Note",
-                text="x",
-                position_x=1.0,
-                position_y=2.0,
-            )
-        )
-        r4 = await by_name["update_title_block"](input_data={"title": "Widget"})
-
-        for result in (r1, r2, r3, r4):
-            assert result["status"] == "error"
-            assert result["error_type"] == "internal"
-
     # ── additional drawing tool branches (legacy tool set) ───────────────
-
-    @pytest.mark.asyncio
-    async def test_add_dimension_accepts_a_plain_dict(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """A plain dict is validated as AddDimensionInput and reaches the adapter."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.add_dimension = AsyncMock(
-            return_value=Mock(is_success=True, data={"id": "Dim1"}, execution_time=0.1)
-        )
-
-        tool_func = next(
-            (t.fn for t in await mcp_server.list_tools() if t.name == "add_dimension"),
-            None,
-        )
-        result = await tool_func(
-            {
-                "dimension_type": "linear",
-                "entity1": "Edge1",
-                "entity2": "Edge2",
-                "position_x": 11.0,
-                "position_y": 22.0,
-                "precision": 3,
-            }
-        )
-
-        assert result["status"] == "success"
-        called_payload = mock_adapter.add_dimension.call_args.args[0]
-        assert called_payload["entity1"] == "Edge1"
-        assert called_payload["entity2"] == "Edge2"
-        assert called_payload["position_x"] == 11.0
-        assert called_payload["position_y"] == 22.0
-
-    @pytest.mark.asyncio
-    async def test_legacy_drawing_tools_no_adapter_support_refuses(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Legacy drawing utility tools refuse rather than inventing a result
-        when the adapter has no matching capability (or, for
-        create_section_view/create_detail_view/check_drawing_standards, has
-        no capability at all to compute the answer).
-
-        ``create_drawing_view`` and ``add_note`` are excluded from that list:
-        the adapter implements them, so they are asserted to reach it.
-        """
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-        by_name = {t.name: t.fn for t in await mcp_server.list_tools()}
-
-        view = await by_name["create_drawing_view"](
-            CreateDrawingViewInput(model_path="m.sldprt", view_type="isometric")
-        )
-        note = await by_name["add_note"](
-            AddNoteInput(text="abc", position_x=1.0, position_y=2.0)
-        )
-        section = await by_name["create_section_view"](
-            CreateSectionViewInput(
-                section_line_start=(0.0, 0.0),
-                section_line_end=(1.0, 1.0),
-                view_position_x=10.0,
-                view_position_y=20.0,
-            )
-        )
-        detail = await by_name["create_detail_view"](
-            CreateDetailViewInput(
-                center_x=0.0,
-                center_y=0.0,
-                radius=2.0,
-                view_position_x=3.0,
-                view_position_y=4.0,
-            )
-        )
-        sheet = await by_name["update_sheet_format"](
-            UpdateSheetFormatInput(format_file="fmt.slddrt")
-        )
-        auto_dim = await by_name["auto_dimension_view"]({"view_name": "Front"})
-        std = await by_name["check_drawing_standards"]({"standard": "ANSI"})
-
-        # create_drawing_view and add_note are implemented now, so they reach
-        # the adapter instead of being refused. That is the stronger
-        # assertion: the tool's hasattr gate resolves to a real capability.
-        assert view["status"] == "success", view
-        assert "does not support" not in str(view)
-        assert note["status"] == "success", note
-        assert "does not support" not in str(note)
-        assert section["status"] == "error"
-        assert "section line" in section["message"].lower()
-        assert detail["status"] == "error"
-        assert "detail circle" in detail["message"].lower()
-        assert sheet["status"] == "error"
-        assert "does not support update_sheet_format" in sheet["message"]
-        assert auto_dim["status"] == "error"
-        assert "does not support auto_dimension_view" in auto_dim["message"]
-        assert std["status"] == "error"
-        assert "compliance_score" not in str(std)
-
-    @pytest.mark.asyncio
-    async def test_legacy_drawing_tools_real_adapter_paths(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Covers success/error branches once the adapter implements
-        create_drawing_view/add_note/update_sheet_format/auto_dimension_view."""
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-        by_name = {t.name: t.fn for t in await mcp_server.list_tools()}
-
-        mock_adapter.create_drawing_view = AsyncMock(
-            return_value=Mock(is_success=True, data={"view": "V1"}, execution_time=0.1)
-        )
-        mock_adapter.add_note = AsyncMock(
-            return_value=Mock(is_success=True, data={"note": "N1"}, execution_time=0.1)
-        )
-        mock_adapter.update_sheet_format = AsyncMock(
-            return_value=Mock(is_success=True, data={"sheet": "A3"}, execution_time=0.1)
-        )
-        mock_adapter.auto_dimension_view = AsyncMock(
-            return_value=Mock(
-                is_success=True, data={"dimensions_added": 4}, execution_time=0.1
-            )
-        )
-
-        view = await by_name["create_drawing_view"](
-            CreateDrawingViewInput(model_path="m.sldprt", view_type="isometric")
-        )
-        note = await by_name["add_note"](
-            AddNoteInput(text="abc", position_x=1.0, position_y=2.0)
-        )
-        sheet = await by_name["update_sheet_format"](
-            UpdateSheetFormatInput(format_file="fmt.slddrt")
-        )
-        auto_dim = await by_name["auto_dimension_view"]({"view_name": "Front"})
-
-        assert view["status"] == "success"
-        assert view["data"]["view"] == "V1"
-        assert note["status"] == "success"
-        assert note["data"]["note"] == "N1"
-        assert sheet["status"] == "success"
-        assert sheet["data"]["sheet"] == "A3"
-        assert auto_dim["status"] == "success"
-        assert auto_dim["data"]["dimensions_added"] == 4
-
-        mock_adapter.create_drawing_view = AsyncMock(
-            return_value=Mock(is_success=False, error="view failed")
-        )
-        mock_adapter.add_note = AsyncMock(
-            return_value=Mock(is_success=False, error="note failed")
-        )
-        mock_adapter.update_sheet_format = AsyncMock(
-            return_value=Mock(is_success=False, error="sheet failed")
-        )
-        mock_adapter.auto_dimension_view = AsyncMock(
-            return_value=Mock(is_success=False, error="auto dim failed")
-        )
-
-        view_err = await by_name["create_drawing_view"](
-            CreateDrawingViewInput(model_path="m.sldprt", view_type="isometric")
-        )
-        note_err = await by_name["add_note"](
-            AddNoteInput(text="abc", position_x=1.0, position_y=2.0)
-        )
-        sheet_err = await by_name["update_sheet_format"](
-            UpdateSheetFormatInput(format_file="fmt.slddrt")
-        )
-        auto_dim_err = await by_name["auto_dimension_view"]({"view_name": "Front"})
-
-        assert view_err["status"] == "error" and "view failed" in view_err["message"]
-        assert note_err["status"] == "error" and "note failed" in note_err["message"]
-        assert sheet_err["status"] == "error" and "sheet failed" in sheet_err["message"]
-        assert (
-            auto_dim_err["status"] == "error"
-            and "auto dim failed" in auto_dim_err["message"]
-        )
-
-    @pytest.mark.asyncio
-    async def test_legacy_drawing_tools_exception_paths(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Covers exception handlers in legacy drawing utility tools.
-
-        create_section_view/create_detail_view/check_drawing_standards no
-        longer touch input_data at all (they refuse unconditionally), so bad
-        input can't crash them — they still report "error", just via the
-        clean refusal path rather than the exception handler.
-        """
-        await register_drawing_tools(mcp_server, mock_adapter, mock_config)
-        by_name = {t.name: t.fn for t in await mcp_server.list_tools()}
-
-        r1 = await by_name["create_drawing_view"]({"bad": True})
-        r2 = await by_name["add_note"]({"bad": True})
-        r3 = await by_name["create_section_view"]({"bad": True})
-        r4 = await by_name["create_detail_view"]({"bad": True})
-        r5 = await by_name["update_sheet_format"]({"bad": True})
-        r6 = await by_name["auto_dimension_view"](None)
-        r7 = await by_name["check_drawing_standards"](None)
-        r8 = await by_name["add_dimension"](object())
-
-        for result in (r1, r2, r3, r4, r5, r6, r7, r8):
-            assert result["status"] == "error"
 
 
 async def _tool(mcp_server, name: str):
@@ -1032,86 +464,6 @@ async def _tool(mcp_server, name: str):
         if registered.name == name:
             return registered.fn
     raise AssertionError(f"Tool not found: {name}")
-
-
-@pytest.mark.asyncio
-async def test_drawing_tools_refuse_without_adapter_support(mcp_server, mock_config):
-    """Drawing tools refuse rather than inventing a result when the adapter
-    (a plain `object()` here) has no matching capability."""
-    await register_drawing_tools(mcp_server, object(), mock_config)
-
-    assert (
-        await (await _tool(mcp_server, "create_drawing_view"))(
-            input_data=CreateDrawingViewInput(model_path="m.sldprt", view_type="front")
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "add_dimension"))(
-            input_data=DrawingAddDimensionInput(
-                dimension_type="linear", entity1="L1", position_x=1, position_y=2
-            )
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "add_note"))(
-            input_data=AddNoteInput(text="n", position_x=1, position_y=2)
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "create_section_view"))(
-            input_data=CreateSectionViewInput(
-                section_line_start=(0, 0),
-                section_line_end=(1, 1),
-                view_position_x=1,
-                view_position_y=2,
-            )
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "create_detail_view"))(
-            input_data=CreateDetailViewInput(
-                center_x=0, center_y=0, radius=2, view_position_x=3, view_position_y=4
-            )
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "update_sheet_format"))(
-            input_data=UpdateSheetFormatInput(format_file="f.slddrt")
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "auto_dimension_view"))(
-            input_data={"view_name": "Front"}
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "check_drawing_standards"))(
-            input_data={"standard": "ANSI"}
-        )
-    )["status"] == "error"
-
-    alias_result = await (await _tool(mcp_server, "add_dimension"))(
-        input_data=DimensionInput(
-            entities=["E1", "E2"], position=[5, 6], dimension_type="linear"
-        )
-    )
-    assert alias_result["status"] == "error"
-
-    assert (
-        await (await _tool(mcp_server, "create_technical_drawing"))(
-            input_data=DrawingCreationInput()
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "add_drawing_view"))(
-            input_data=DrawingViewInput(
-                view_name="Front", view_type="front", position=[1, 1]
-            )
-        )
-    )["status"] == "error"
-    assert (
-        await (await _tool(mcp_server, "update_title_block"))(input_data={"title": "A"})
-    )["status"] == "error"
 
 
 #: Capabilities a tool on this branch already reaches. ``tools/drawing.py``
@@ -1175,3 +527,29 @@ async def test_list_drawing_views_tool(mcp_server, mock_adapter, mock_config) ->
     crashed = await tool()
     assert crashed["error_type"] == "internal"
     assert crashed["message"] == "list_drawing_views failed: RuntimeError: boom"
+
+
+@pytest.mark.asyncio
+async def test_add_note_places_a_note(mcp_server, mock_adapter, mock_config) -> None:
+    await register_drawing_tools(mcp_server, mock_adapter, mock_config)
+    tool = next(t.fn for t in await mcp_server.list_tools() if t.name == "add_note")
+    mock_adapter.add_note = AsyncMock(
+        return_value=Mock(
+            is_success=True, data={"text": "MATERIAL"}, execution_time=0.1
+        )
+    )
+
+    result = await tool({"text": "MATERIAL: 6061", "position_x": 20, "position_y": 30})
+
+    assert result["status"] == "success"
+    assert result["message"] == "Added note: MATERIAL: 6061..."
+
+
+@pytest.mark.asyncio
+async def test_add_note_refuses_without_the_capability(mcp_server, mock_config) -> None:
+    await register_drawing_tools(mcp_server, object(), mock_config)
+    tool = next(t.fn for t in await mcp_server.list_tools() if t.name == "add_note")
+
+    result = await tool({"text": "X", "position_x": 1, "position_y": 1})
+
+    assert result["error_type"] == "not_supported"

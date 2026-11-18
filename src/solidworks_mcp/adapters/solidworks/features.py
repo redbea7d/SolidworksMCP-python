@@ -20,6 +20,11 @@ from ..base import (
 from .com_utils import as_list
 from .com_utils import attempt as _attempt
 from .com_utils import flag as _flag
+from .configurations import (
+    SPECIFY_CONFIGURATION,
+    THIS_CONFIGURATION,
+    configuration_scope,
+)
 
 
 class SolidWorksFeaturesMixin:
@@ -59,7 +64,8 @@ class SolidWorksFeaturesMixin:
         anything, so besides the feature-count check inside
         :func:`_add_fillet_impl` the volume is compared before and after,
         here in the async layer for the same reason as ``mirror_feature``.
-        An unreadable volume is not treated as failure.
+        An unreadable volume is not treated as failure. With no ``edge_names``
+        (the current selection) the volume is not read: see the comment below.
 
         Args:
             radius: Fillet radius in millimetres.
@@ -71,6 +77,13 @@ class SolidWorksFeaturesMixin:
             ``volume_before`` / ``volume_after`` in its properties when they
             could be read. ``ERROR`` when the volume did not change.
         """
+        if not edge_names:
+            # "Use the current selection": reading the volume first forces a
+            # rebuild, and a rebuild clears the selection, so FeatureFillet3
+            # would find no edges (seen live 2026-11-16 after
+            # select_face_edges). The feature-count check in
+            # _add_fillet_impl still catches a fillet that builds nothing.
+            return _add_fillet_impl(self, radius, edge_names)
         before = await self.get_mass_properties()
         volume_before = (
             before.data.volume if before.is_success and before.data else None
@@ -138,9 +151,9 @@ class SolidWorksFeaturesMixin:
         )
 
     async def suppress_feature(
-        self, name: str, suppress: bool = True
+        self, name: str, suppress: bool = True, configurations: str | list[str] = "this"
     ) -> AdapterResult[dict[str, Any]]:
-        return _suppress_feature_impl(self, name, suppress)
+        return _suppress_feature_impl(self, name, suppress, configurations)
 
     async def rename_feature(
         self, old_name: str, new_name: str
@@ -381,7 +394,8 @@ def _with_volume_change(
     data["volume_before"] = before
     data["volume_after"] = after
     data["volume_change"] = after - before
-    data["volume_ratio"] = round(after / before, 6)
+    # A first feature (a base flange) starts from nothing: no ratio.
+    data["volume_ratio"] = round(after / before, 6) if before else None
     return AdapterResult(
         status=AdapterResultStatus.SUCCESS,
         data=data,
@@ -1905,6 +1919,7 @@ def _select_edge_by_coord(
     mark: int = 0,
     entity_type: str = "EDGE",
     picker: _BodyEntityPicker | None = None,
+    rebuild: bool = True,
 ) -> bool:
     """Select the edge (or face) nearest to (x, y, z) in metres.
 
@@ -1930,6 +1945,8 @@ def _select_edge_by_coord(
         entity_type: ``"EDGE"``, ``"FACE"``, or another ``SelectByID2``
             type such as ``"VERTEX"``.
         picker: Reuse a picker (and its body walk) across several picks.
+        rebuild: Rebuild before the first pick. Pass False inside an open
+            sketch: a rebuild there closes the sketch (seen live).
 
     Returns:
         bool: True if an entity was selected; False otherwise.
@@ -1943,7 +1960,7 @@ def _select_edge_by_coord(
 
     # Rebuild to tessellate geometry from recent features before the first
     # entity in the selection set (when append=False this is the first one).
-    if not append:
+    if not append and rebuild:
         adapter._attempt(lambda: model.ForceRebuild3(True), default=None)
 
     # Only edges and faces are walked on the body; anything else (a vertex)
@@ -2597,7 +2614,7 @@ def _delete_feature_impl(adapter: Any, name: str) -> AdapterResult[dict[str, Any
 
 
 def _suppress_feature_impl(
-    adapter: Any, name: str, suppress: bool
+    adapter: Any, name: str, suppress: bool, configurations: str | list[str] = "this"
 ) -> AdapterResult[dict[str, Any]]:
     """Suppress or unsuppress a named feature in the active model.
 
@@ -2606,12 +2623,15 @@ def _suppress_feature_impl(
 
     ``EditSuppress2`` and ``EditUnsuppress2`` report through the error channel
     only, so the resulting state is read back from ``IFeature::IsSuppressed``
-    rather than inferred from the call returning quietly.
+    rather than inferred from the call returning quietly. ``"all"`` or a list
+    of configurations uses ``IFeature.SetSuppression2(state, option, names)``
+    instead; the read-back is then the active configuration's state.
 
     Args:
         adapter: A connected adapter with a valid ``currentModel``.
         name: Feature name to toggle.
         suppress: ``True`` to suppress, ``False`` to unsuppress.
+        configurations: ``"this"``, ``"all"`` or configuration names.
 
     Returns:
         AdapterResult[dict[str, Any]]: The feature and its state afterwards.
@@ -2625,22 +2645,29 @@ def _suppress_feature_impl(
         return AdapterResult(status=AdapterResultStatus.ERROR, error="No active model")
 
     def _suppress_operation() -> dict[str, Any]:
+        option, names, array = configuration_scope(adapter, configurations)
         feature = _select_feature_by_name(adapter, name)
         if feature is None:
             raise Exception(f"Feature not found: {name}")
 
         was = _is_suppressed(adapter, feature)
-        # EditSuppress2/EditUnsuppress2 take no arguments, and late binding
-        # resolves them as properties on some dispatches: calling with ()
-        # performs the edit and *then* raises "'bool' object is not callable",
-        # so the operation succeeds while the caller sees a failure.
-        member = "EditSuppress2" if suppress else "EditUnsuppress2"
-        _, err = adapter._attempt_with_error(
-            lambda: adapter._get_attr_or_call(adapter.currentModel, member)
-        )
-        if err is not None:
-            action = "suppress" if suppress else "unsuppress"
-            raise Exception(f"Failed to {action} {name}: {err}")
+        action = "suppress" if suppress else "unsuppress"
+        if option == THIS_CONFIGURATION:
+            # EditSuppress2/EditUnsuppress2 take no arguments, and late binding
+            # resolves them as properties on some dispatches: calling with ()
+            # performs the edit and *then* raises "'bool' object is not
+            # callable", so the operation succeeds while the caller sees a
+            # failure.
+            member = "EditSuppress2" if suppress else "EditUnsuppress2"
+            _, err = adapter._attempt_with_error(
+                lambda: adapter._get_attr_or_call(adapter.currentModel, member)
+            )
+            if err is not None:
+                raise Exception(f"Failed to {action} {name}: {err}")
+        elif not feature.SetSuppression2(0 if suppress else 1, option, array):
+            raise Exception(
+                f"SetSuppression2 refused to {action} {name} in {', '.join(names)}."
+            )
 
         adapter._attempt(lambda: adapter.currentModel.EditRebuild3(), default=None)
 
@@ -2650,7 +2677,8 @@ def _suppress_feature_impl(
             default=None,
         )
         now = _is_suppressed(adapter, refreshed) if refreshed is not None else None
-        if now is not None and now != suppress:
+        acts_here = option != SPECIFY_CONFIGURATION or _active_in(adapter, names)
+        if acts_here and now is not None and now != suppress:
             action = "suppressed" if suppress else "unsuppressed"
             raise Exception(
                 f"{name} reports suppressed={now} after being {action}; the "
@@ -2662,12 +2690,19 @@ def _suppress_feature_impl(
             "requested": suppress,
             "suppressed": now,
             "was_suppressed": was,
+            "configurations": names,
         }
 
     return cast(
         AdapterResult[dict[str, Any]],
         adapter._handle_com_operation("suppress_feature", _suppress_operation),
     )
+
+
+def _active_in(adapter: Any, names: list[str]) -> bool:
+    """Whether the active configuration is one of ``names``."""
+    active = configuration_scope(adapter, "this")[1]
+    return bool(active) and active[0] in names
 
 
 def _rename_feature_impl(
@@ -2982,7 +3017,7 @@ def _select_face_at_point(adapter: Any, point_mm: list[float], mark: int) -> boo
     face = selector.face_at_point(selector.faces(), point_mm)
     if not face.is_planar:
         raise LookupError(
-            f"The face at {list(point_mm)} mm is not flat; a plane needs a flat face."
+            f"The face at {list(point_mm)} mm is not flat; a plane or a sketch needs a flat face."
         )
     sel_mgr = adapter.currentModel.SelectionManager
     _flag(adapter, sel_mgr, "CreateSelectData")

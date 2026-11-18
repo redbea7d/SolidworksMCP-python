@@ -12,8 +12,8 @@ Tools contain business logic only. They:
 adapter's timing, else the tool's own wall time) - using :class:`ErrorClassifier` to name the failure.
 :class:`ToolRegistrar` applies the boundary to every tool at registration, so no
 tool can forget it. It also adds each tool's support level (from
-``support_levels.py``) to its tags and, for a beta or experimental tool, a
-``warning`` to its successful results.
+``support_levels.py``) to its tags and, for a beta, experimental or deprecated
+tool, a ``warning`` to its successful results.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from .error_classifier import (
     ErrorClassifier,
 )
 from .input_compat import removed_inputs
+from .requirements import REQUIREMENTS, Requirement, requirement_of
 from .support_levels import SUPPORT_LEVELS, Support
 from .tool_hints import TOOL_HINTS, ToolHints
 
@@ -332,8 +333,9 @@ class ToolRegistrar:
     It also gives each tool its title and behaviour hints from the hints
     table, its family tag (see :func:`tool_family`), and its support level
     from the levels table: a ``level:<level>`` tag and, below stable, a
-    ``warning`` on success. Everything else is forwarded to the wrapped
-    server unchanged.
+    ``warning`` on success. A ``needs:<requirement>`` tag says what it needs
+    from SolidWorks (``tools/requirements.py``). Everything else is
+    forwarded to the wrapped server unchanged.
     """
 
     def __init__(
@@ -342,11 +344,13 @@ class ToolRegistrar:
         classifier: ErrorClassifier = _CLASSIFIER,
         hints: Mapping[str, ToolHints] = TOOL_HINTS,
         levels: Mapping[str, Support] = SUPPORT_LEVELS,
+        requirements: Mapping[str, Requirement] = REQUIREMENTS,
     ) -> None:
         self._mcp = mcp
         self._classifier = classifier
         self._hints = hints
         self._levels = levels
+        self._requirements = requirements
 
     def _support(self, name: str) -> Support:
         """The support entry of a tool being registered.
@@ -358,7 +362,7 @@ class ToolRegistrar:
         if support is None:
             raise KeyError(
                 f"Tool {name!r} has no entry in tools/support_levels.py; add its "
-                "support level (stable, beta, experimental or planned) there."
+                "support level (stable, beta, experimental, planned or deprecated) there."
             )
         return support
 
@@ -368,8 +372,8 @@ class ToolRegistrar:
         """The registration kwargs with the tool's title, hints and tag added.
 
         Explicit ``title``/``annotations``/``description`` kwargs win over
-        the tables; tags are merged. A beta or experimental tool's
-        description opens with its level sentence, the same as its
+        the tables; tags are merged. A beta, experimental or deprecated
+        tool's description opens with its level sentence, the same as its
         ``warning``.
 
         Args:
@@ -396,6 +400,7 @@ class ToolRegistrar:
         merged["tags"] = {
             tool_family(fn),
             f"level:{support.level.value}",
+            f"needs:{requirement_of(name, self._requirements).value}",
             *(kwargs.get("tags") or ()),
         }
         warning = support.warning()

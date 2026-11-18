@@ -1,12 +1,16 @@
 site_name: SolidWorks MCP Server
-site_url: https://andrewbartels1.github.io/SolidworksMCP-python
-site_description: Python MCP server for SolidWorks automation with 152 tools
+site_url: https://andrewbartels1.com/SolidworksMCP-python
+site_description: Python MCP server for SolidWorks automation with 134 tools
 strict: true
 
 # Repository
 repo_name: SolidworksMCP-python
 repo_url: https://github.com/andrewbartels1/SolidworksMCP-python
 edit_uri: edit/main/docs/
+
+# Generated fragments included by pymdownx.snippets, not pages of their own.
+exclude_docs: |
+  assets/progress/tool-list-size.md
 
 # Validation
 validation:

@@ -4,28 +4,38 @@ Build 2-D sketch geometry (lines, circles, arcs, splines, polygons) and apply ge
 
 > **Prerequisite:** An active part document with an active sketch edit session.
 
-**Total tools in this category: 18**
+**Total tools in this category: 19**
 
 ---
 
 ### `create_sketch`
 
-Open a new sketch on a plane of the active part, ready for lines, circles and other sketch entities.
+Open a new sketch on a plane or a flat face of the active part, ready for lines, circles and other sketch entities.
 
 **Prerequisite:** Active part document, no active sketch
 
-**Parameters:**
+**Parameters:** give exactly one of `plane` and `face_point`.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `plane` | `str` | ✅ | `` | Sketch plane name (e.g., 'Top', 'Front', 'Right', 'XY', 'XZ', 'YZ') |
-| `sketch_name` | `str?` | — | `None` | Sketch name alias |
+| `plane` | `str?` | one of | `None` | Sketch plane name (e.g., 'Top', 'Front', 'Right', 'XY', 'XZ', 'YZ', or a plane made by `create_reference_plane`) |
+| `face_point` | `list[float]?` | one of | `None` | `[x, y, z]` in mm on a flat face of the body; the sketch opens on that face and moves with it when the model changes |
+| `sketch_name` | `str?` | — | `None` | Name `exit_sketch` gives the sketch when it closes it |
 
-**Sample call:**
+A `face_point` that is not on a flat face of the body (in the air, or on a
+fillet) fails with `error_type: "invalid_input"` and opens no sketch.
+
+**Sample calls:**
 
 ```json
 {
   "plane": "Front"
+}
+```
+
+```json
+{
+  "face_point": [0, 20, 0]
 }
 ```
 
@@ -437,7 +447,31 @@ Offset sketch entities by a distance in mm, outward or inward, e.g. for a wall o
 
 ---
 
+### `sketch_convert_entities`
+
+Copy model edges, or a face's whole outline, into the open sketch (Convert Entities).
+
+**Prerequisite:** Active sketch edit mode, on a part with those edges.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `edge_points` | `list[list[float]]` | one of | `[]` | `[x, y, z]` mm on each model edge to copy |
+| `face_point` | `list[float]` | one of | `None` | `[x, y, z]` mm on a face whose outline to copy |
+| `construction` | `bool` | — | `false` | Make the copies construction geometry |
+
+**Sample call:**
+
+```json
+{"face_point": [0, 0, 20]}
+```
+
+---
+
 ### `sketch_tutorial_simple_hole`
+
+> **Deprecated:** no replacement; build the hole with the sketching and feature tools. It keeps working until 3.0.0, when it is removed.
 
 Demonstrate the sketch steps: draw a 5 mm circle at the origin on the Top plane and close the sketch.
 
@@ -451,31 +485,3 @@ Demonstrate the sketch steps: draw a 5 mm circle at the origin on the Top plane 
 
 ---
 
-### `tutorial_simple_hole`
-
-Draw a circle on a plane and cut it as a hole, as one worked example.
-
-**Prerequisite:** SolidWorks running
-
-**Parameters:**
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `plane` | `str` | ✅ | `` | Sketch plane for the hole |
-| `center_x` | `float` | ✅ | `` | Hole center X coordinate in mm |
-| `center_y` | `float` | ✅ | `` | Hole center Y coordinate in mm |
-| `diameter` | `float` | ✅ | `` | Hole diameter in mm |
-| `depth` | `float?` | — | `None` | Hole depth in mm (None for through hole) |
-
-**Sample call:**
-
-```json
-{
-  "plane": "Front",
-  "center_x": 0.0,
-  "center_y": 0.0,
-  "diameter": 10.0
-}
-```
-
----

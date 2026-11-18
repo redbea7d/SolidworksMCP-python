@@ -33,18 +33,25 @@ it will again.
   reply's `warning` names what else went.
 - `get_model_info` and `list_features` show where the model stands now.
 
-## Tools that can't run yet
+## Deprecated tools
 
-40 tools are registered but nothing implements them (support level
-`planned`). Their description says "Not available yet"; every call returns
-`not_supported`. They are
-mostly batch, template, macro-recording and drawing-analysis tools, plus
-`tutorial_simple_hole`, `add_dimension`, `create_section_view`, `create_detail_view`,
-`update_title_block`, `analyze_geometry`, `get_material_properties` and
-`batch_export`. Each description names what to use today.
+Eight tools still work but are replaced; use the replacement. A deprecated
+tool's description and successful result start "Deprecated: use `<tool>`.",
+and it goes at the next major release.
+
+| Deprecated | Use |
+| --- | --- |
+| `load_part`, `load_assembly` | `open_model` |
+| `save_part`, `save_assembly` | `save_file` (`pack_and_go_assembly` to copy an assembly with its parts) |
+| `calculate_mass_properties` | `get_mass_properties` |
+| `get_file_properties` | `get_model_info` |
+| `add_drawing_view` | `create_drawing_view` |
+| `sketch_tutorial_simple_hole` | the sketching and feature tools; it has no replacement |
 
 ## Known faults and how to work around them
 
 | Fault | Workaround |
 | --- | --- |
 | `add_mate` can't mate edges or vertices, only planes, axes and faces. | Mate the faces that meet at the edge. |
+| `pack_and_go_assembly` copies the files as saved on disk; unsaved changes in open parts are left out, and its `warning` names those parts. | Save the assembly and its parts first, then pack. |
+| `compare_drawing_versions`: SolidWorks writes a different file every time it saves, so two saves of an unchanged drawing still differ. | Treat "identical" as proof nothing changed; treat "different" as "may have changed", and check with `list_drawing_views`. |

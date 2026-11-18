@@ -20,7 +20,7 @@ def flag(adapter: Any, obj: Any, *names: str) -> None:
     """Flag just ``names`` as methods on ``obj`` (no-op for ``None``/fakes).
 
     Flagging a whole interface costs ~27 ms per fresh dispatch (see
-    ``_WALK_MEMBERS`` in pywin32_adapter); SolidWorks hands back a fresh
+    ``WALK_MEMBERS`` in feature_walk); SolidWorks hands back a fresh
     dispatch on most calls, so flag only what is about to be read.
     """
     attempt(adapter, lambda: _sw_type_info.flag_members(obj, *names), 0)
@@ -54,3 +54,40 @@ def strip_op_prefix(error: str | None, operation_name: str) -> str | None:
     if not error:
         return error
     return error.removeprefix(f"Error in {operation_name}: ")
+
+
+def string_array(values: list[str]) -> Any:
+    """``VARIANT(VT_ARRAY | VT_BSTR)``, e.g. configuration names (tuple when pywin32 is absent)."""
+    try:
+        import pythoncom
+        import win32com.client as w32
+
+        return w32.VARIANT(
+            pythoncom.VT_ARRAY | pythoncom.VT_BSTR, [str(v) for v in values]
+        )
+    except ImportError:  # non-Windows
+        return tuple(values)
+
+
+def double_array(values: list[float]) -> Any:
+    """``VARIANT(VT_ARRAY | VT_R8)`` for array-valued COM properties (tuple when pywin32 is absent)."""
+    try:
+        import pythoncom
+        import win32com.client as w32
+
+        return w32.VARIANT(
+            pythoncom.VT_ARRAY | pythoncom.VT_R8, [float(v) for v in values]
+        )
+    except ImportError:  # non-Windows
+        return tuple(values)
+
+
+def dispatch_array(values: list[Any]) -> Any:
+    """``VARIANT(VT_ARRAY | VT_DISPATCH)``, e.g. edges for a flange (tuple when pywin32 is absent)."""
+    try:
+        import pythoncom
+        import win32com.client as w32
+
+        return w32.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, list(values))
+    except ImportError:  # non-Windows
+        return tuple(values)

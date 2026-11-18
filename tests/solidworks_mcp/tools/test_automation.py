@@ -1,12 +1,8 @@
 """Tests for SolidWorks automation tools."""
 
-from unittest.mock import AsyncMock, Mock, patch
-
 import pytest
 from fastmcp import FastMCP
 
-from solidworks_mcp.adapters.base import AdapterResult, AdapterResultStatus
-from solidworks_mcp.adapters.mock_adapter import MockSolidWorksAdapter
 from solidworks_mcp.config import (
     AdapterType,
     DeploymentMode,
@@ -14,14 +10,8 @@ from solidworks_mcp.config import (
     SolidWorksMCPConfig,
 )
 from solidworks_mcp.tools.automation import (
-    BatchProcessInput,
-    DesignTableInput,
     GenerateVBAInput,
-    PerformanceOptimizationInput,
-    RecordMacroInput,
-    TemplateInput,
     VBAGenerationInput,
-    WorkflowInput,
     register_automation_tools,
 )
 
@@ -37,357 +27,36 @@ class TestAutomationTools:
         tool_count = await register_automation_tools(
             mcp_server, mock_adapter, mock_config
         )
-        assert tool_count == 8
+        assert tool_count == 1
 
     @pytest.mark.asyncio
     async def test_generate_vba_code_success(
         self, mcp_server, mock_adapter, mock_config
     ):
-        """Test successful VBA code generation."""
+        """The skeleton names its Sub, checks the document type, never blocks."""
         await register_automation_tools(mcp_server, mock_adapter, mock_config)
+        tool_func = next(
+            t.fn for t in await mcp_server.list_tools() if t.name == "generate_vba_code"
+        )
 
-        mock_adapter.generate_vba_code = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "vba_code": "Sub CreateExtrusion()\n    ' Generated VBA code\n    swModel.FeatureManager.FeatureExtrusion2(...)\nEnd Sub",
-                    "operation_type": "Extrusion",
-                    "parameter_count": 15,
-                    "estimated_execution_time": 2.1,
-                    "complexity_level": "High",
-                },
-                execution_time=0.8,
+        result = await tool_func(
+            input_data=VBAGenerationInput(
+                operation_type="Add 3 holes (M6), then save", target_document="part"
             )
         )
 
-        input_data = VBAGenerationInput(
-            operation_type="Extrusion",
-            parameters={
-                "sketch_name": "Sketch1",
-                "depth": 25.0,
-                "direction": "Blind",
-                "reverse_direction": False,
-                "draft_angle": 0.0,
-                "draft_outward": True,
-                "thin_feature": False,
-                "merge_result": True,
-                "start_condition": "SketchPlane",
-                "end_condition": "Blind",
-                "end_condition_reference": None,
-                "offset_parameters": {},
-                "feature_scope": "All bodies",
-                "auto_select": True,
-                "assembly_feature_scope": "All components",
-            },
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "generate_vba_code":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
+        vba = result["vba_code"]
         assert result["status"] == "success"
-        assert "CreateExtrusion" in result["data"]["vba_code"]
-        assert result["data"]["parameter_count"] == 15
-        assert result["data"]["complexity_level"] == "High"
-        mock_adapter.generate_vba_code.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_start_macro_recording_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful macro recording start."""
-        await register_automation_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.start_macro_recording = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "recording_session_id": "rec_001",
-                    "recording_started": True,
-                    "output_file": "recorded_macro.swp",
-                    "recording_mode": "User actions",
-                    "start_timestamp": "2024-03-15T10:30:00",
-                },
-                execution_time=0.3,
-            )
-        )
-
-        input_data = RecordMacroInput(
-            recording_name="Test Recording",
-            output_file="recorded_macro.swp",
-            recording_mode="User actions",
-            capture_mouse=True,
-            capture_keyboard=True,
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "automation_start_macro_recording":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["recording_started"] is True
-        assert result["data"]["output_file"] == "recorded_macro.swp"
-        mock_adapter.start_macro_recording.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_batch_process_files_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful batch file processing."""
-        await register_automation_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.batch_process_files = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "total_files": 10,
-                    "processed_files": 9,
-                    "failed_files": 1,
-                    "processing_time": 45.2,
-                    "operation": "Update custom properties",
-                    "results": [
-                        {"file": "part1.sldprt", "status": "success"},
-                        {"file": "part2.sldprt", "status": "success"},
-                        {
-                            "file": "part3.sldprt",
-                            "status": "failed",
-                            "error": "File locked",
-                        },
-                        # ... more results
-                    ],
-                },
-                execution_time=45.2,
-            )
-        )
-
-        input_data = BatchProcessInput(
-            source_directory="./parts/",
-            operation="Update custom properties",
-            operation_parameters={
-                "properties": {"Author": "Engineer", "Revision": "A"},
-                "overwrite_existing": True,
-            },
-            file_pattern="*.sldprt",
-            include_subdirectories=True,
-            parallel_processing=True,
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "batch_process_files":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["total_files"] == 10
-        assert result["data"]["processed_files"] == 9
-        assert result["data"]["failed_files"] == 1
-        mock_adapter.batch_process_files.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_manage_design_table_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful design table management."""
-        await register_automation_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.manage_design_table = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "design_table_file": "part_configurations.xls",
-                    "configurations_created": 5,
-                    "parameters_linked": 12,
-                    "operation": "Link Excel table",
-                    "table_rows": 6,  # Including header
-                    "table_columns": 8,
-                },
-                execution_time=1.5,
-            )
-        )
-
-        input_data = DesignTableInput(
-            model_path="configurable_part.sldprt",
-            table_file="part_configurations.xls",
-            operation="Link Excel table",
-            auto_update=True,
-            create_configurations=True,
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "manage_design_table":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["configurations_created"] == 5
-        assert result["data"]["parameters_linked"] == 12
-        mock_adapter.manage_design_table.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_execute_workflow_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful workflow execution."""
-        await register_automation_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.execute_workflow = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "workflow_name": "Part Creation Workflow",
-                    "steps_completed": 8,
-                    "total_steps": 8,
-                    "execution_time": 12.5,
-                    "output_files": ["final_part.sldprt", "part_drawing.slddrw"],
-                    "workflow_status": "Completed successfully",
-                },
-                execution_time=12.5,
-            )
-        )
-
-        input_data = WorkflowInput(
-            workflow_name="Part Creation Workflow",
-            steps=[
-                {"action": "open_template", "template": "part_template.prtdot"},
-                {"action": "create_sketch", "plane": "Front"},
-                {"action": "sketch_rectangle", "width": 50, "height": 30},
-                {"action": "extrude", "depth": 25},
-                {"action": "create_drawing", "template": "drawing_template.drwdot"},
-                {"action": "add_views", "views": ["Front", "Right", "Top"]},
-                {"action": "add_dimensions", "auto_dimension": True},
-                {"action": "save_all"},
-            ],
-            parallel_execution=False,
-            error_handling="Stop on error",
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "execute_workflow":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["steps_completed"] == 8
-        assert result["data"]["total_steps"] == 8
-        assert "final_part.sldprt" in result["data"]["output_files"]
-        mock_adapter.execute_workflow.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_create_template_success(self, mcp_server, mock_adapter, mock_config):
-        """Test successful template creation."""
-        await register_automation_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.create_template = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "template_file": "custom_part_template.prtdot",
-                    "template_type": "Part",
-                    "included_features": [
-                        "Base sketch",
-                        "Custom properties",
-                        "Material assignment",
-                    ],
-                    "settings_captured": 15,
-                    "template_size": "125 KB",
-                },
-                execution_time=2.8,
-            )
-        )
-
-        input_data = TemplateInput(
-            source_model="reference_part.sldprt",
-            template_name="Custom Part Template",
-            template_type="Part",
-            output_path="templates/custom_part_template.prtdot",
-            include_custom_properties=True,
-            include_materials=True,
-            include_features=["Base sketch"],
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "create_template":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["template_file"] == "custom_part_template.prtdot"
-        assert result["data"]["settings_captured"] == 15
-        mock_adapter.create_template.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_optimize_performance_success(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test successful performance optimization."""
-        await register_automation_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.optimize_performance = AsyncMock(
-            return_value=Mock(
-                is_success=True,
-                data={
-                    "optimization_type": "Assembly performance",
-                    "optimizations_applied": [
-                        "Lightweight components",
-                        "Simplified representations",
-                        "Display states optimization",
-                        "Large assembly mode",
-                    ],
-                    "performance_improvement": "35%",
-                    "memory_savings": "450 MB",
-                    "load_time_reduction": "12.3 seconds",
-                },
-                execution_time=3.2,
-            )
-        )
-
-        input_data = PerformanceOptimizationInput(
-            target_file="large_assembly.sldasm",
-            optimization_type="Assembly performance",
-            optimization_level="Aggressive",
-            preserve_features=["Mates", "Dimensions"],
-            create_backup=True,
-        )
-
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "optimize_performance":
-                tool_func = tool.fn
-                break
-
-        assert tool_func is not None
-        result = await tool_func(input_data=input_data)
-
-        assert result["status"] == "success"
-        assert result["data"]["performance_improvement"] == "35%"
-        assert "Lightweight components" in result["data"]["optimizations_applied"]
-        mock_adapter.optimize_performance.assert_called_once()
+        assert vba["sub_name"] == "Add_3_holes_M6_then_save"
+        assert "Sub Add_3_holes_M6_then_save()" in vba["code"]
+        # SolidWorks runs a .swb macro only through main, which calls the Sub.
+        assert "Sub main()\n    Add_3_holes_M6_then_save\nEnd Sub" in vba["code"]
+        assert "If swModel.GetType <> 1 Then" in vba["code"]
+        assert "MsgBox" not in vba["code"]
+        assert "On Error GoTo ErrorHandler" in vba["code"]
+        assert vba["target_document"] == "Part"
+        assert vba["lines_of_code"] == len(vba["code"].split("\n"))
+        assert "style" not in vba
 
     @pytest.mark.asyncio
     async def test_automation_error_handling(
@@ -396,217 +65,17 @@ class TestAutomationTools:
         """Test error handling in automation operations."""
         await register_automation_tools(mcp_server, mock_adapter, mock_config)
 
-        mock_adapter.generate_vba_code = AsyncMock(
-            return_value=Mock(
-                is_success=False,
-                error="Invalid operation parameters",
-                execution_time=0.1,
-            )
+        tool_func = next(
+            t.fn for t in await mcp_server.list_tools() if t.name == "generate_vba_code"
         )
 
-        input_data = VBAGenerationInput(
-            operation_type="Invalid Operation", parameters={}
+        result = await tool_func(
+            input_data={"operation_type": "Invalid Operation", "parameters": {}}
         )
 
-        tool_func = None
-        for tool in await mcp_server.list_tools():
-            if tool.name == "generate_vba_code":
-                tool_func = tool.fn
-                break
-
-        result = await tool_func(input_data=input_data)
         assert result["status"] == "error"
-        assert "Invalid operation parameters" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_automation_fallback_paths_without_adapter_methods(
-        self, mcp_server, mock_config
-    ):
-        """Automation tools refuse rather than inventing a result when the
-        adapter has no matching capability. generate_vba_code is the one
-        exception: it produces real VBA text from the operation description,
-        so it still succeeds without an adapter."""
-        await register_automation_tools(mcp_server, object(), mock_config)
-
-        by_name = {tool.name: tool.fn for tool in await mcp_server.list_tools()}
-
-        vba = await by_name["generate_vba_code"](
-            input_data=VBAGenerationInput(operation_type="Create Block")
-        )
-        start = await by_name["automation_start_macro_recording"](
-            input_data=RecordMacroInput(recording_name="Macro A")
-        )
-        stop = await by_name["automation_stop_macro_recording"](
-            input_data={"session": "x"}
-        )
-        batch = await by_name["batch_process_files"](
-            input_data=BatchProcessInput(
-                source_directory="./parts",
-                operation="export",
-                target_format="step",
-                file_pattern="*.sldprt",
-            )
-        )
-        table = await by_name["manage_design_table"](
-            input_data=DesignTableInput(operation="create")
-        )
-        workflow = await by_name["execute_workflow"](
-            input_data=WorkflowInput(
-                workflow_name="WF",
-                steps=[{"name": "step-1"}],
-                parallel_execution=False,
-                error_handling="stop",
-            )
-        )
-        template = await by_name["create_template"](
-            input_data=TemplateInput(template_type="part", template_name="StdPart")
-        )
-        optimize = await by_name["optimize_performance"](
-            input_data={"optimization_type": "general"}
-        )
-
-        assert vba["status"] == "success"
-        assert "vba_code" in vba
-        assert start["status"] == "error"
-        assert "does not support start_macro_recording" in start["message"]
-        assert stop["status"] == "error"
-        assert stop["message"]  # unconditional refusal, no adapter to check
-        assert batch["status"] == "error"
-        assert "does not support batch_process_files" in batch["message"]
-        assert table["status"] == "error"
-        assert "does not support manage_design_table" in table["message"]
-        assert workflow["status"] == "error"
-        assert "does not support execute_workflow" in workflow["message"]
-        assert template["status"] == "error"
-        assert "does not support create_template" in template["message"]
-        assert optimize["status"] == "error"
-        assert "does not support optimize_performance" in optimize["message"]
-
-    @pytest.mark.asyncio
-    async def test_automation_exception_paths_from_adapter_methods(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Test exception handlers across automation tools that call adapter methods."""
-        await register_automation_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.generate_vba_code = AsyncMock(side_effect=RuntimeError("vba boom"))
-        mock_adapter.start_macro_recording = AsyncMock(
-            side_effect=RuntimeError("record boom")
-        )
-        mock_adapter.batch_process_files = AsyncMock(
-            side_effect=RuntimeError("batch boom")
-        )
-        mock_adapter.manage_design_table = AsyncMock(
-            side_effect=RuntimeError("table boom")
-        )
-        mock_adapter.execute_workflow = AsyncMock(side_effect=RuntimeError("wf boom"))
-        mock_adapter.create_template = AsyncMock(side_effect=RuntimeError("tpl boom"))
-        mock_adapter.optimize_performance = AsyncMock(
-            side_effect=RuntimeError("perf boom")
-        )
-
-        by_name = {tool.name: tool.fn for tool in await mcp_server.list_tools()}
-
-        vba = await by_name["generate_vba_code"](
-            input_data=VBAGenerationInput(operation_type="X")
-        )
-        start = await by_name["automation_start_macro_recording"](
-            input_data=RecordMacroInput(recording_name="Y")
-        )
-        batch = await by_name["batch_process_files"](
-            input_data=BatchProcessInput(source_directory="./parts", operation="export")
-        )
-        table = await by_name["manage_design_table"](
-            input_data=DesignTableInput(operation="create")
-        )
-        workflow = await by_name["execute_workflow"](
-            input_data=WorkflowInput(
-                workflow_name="WF",
-                steps=[{"name": "step-1"}],
-                parallel_execution=False,
-                error_handling="stop",
-            )
-        )
-        template = await by_name["create_template"](
-            input_data=TemplateInput(template_type="part", template_name="StdPart")
-        )
-        optimize = await by_name["optimize_performance"](
-            input_data={"optimization_type": "general"}
-        )
-
-        assert vba["status"] == "error"
-        assert vba["error_type"] == "internal"
-        assert start["status"] == "error"
-        assert start["error_type"] == "internal"
-        assert batch["status"] == "error"
-        assert batch["error_type"] == "internal"
-        assert table["status"] == "error"
-        assert table["error_type"] == "internal"
-        assert workflow["status"] == "error"
-        assert workflow["error_type"] == "internal"
-        assert template["status"] == "error"
-        assert template["error_type"] == "internal"
-        assert optimize["status"] == "error"
-        assert optimize["error_type"] == "internal"
-
-    @pytest.mark.asyncio
-    async def test_automation_remaining_error_returns(
-        self, mcp_server, mock_adapter, mock_config
-    ):
-        """Cover adapter error-return branches for remaining automation tools."""
-        await register_automation_tools(mcp_server, mock_adapter, mock_config)
-
-        mock_adapter.batch_process_files = AsyncMock(
-            return_value=Mock(is_success=False, error="batch failed")
-        )
-        mock_adapter.manage_design_table = AsyncMock(
-            return_value=Mock(is_success=False, error="table failed")
-        )
-        mock_adapter.execute_workflow = AsyncMock(
-            return_value=Mock(is_success=False, error="workflow failed")
-        )
-        mock_adapter.create_template = AsyncMock(
-            return_value=Mock(is_success=False, error="template failed")
-        )
-        mock_adapter.optimize_performance = AsyncMock(
-            return_value=Mock(is_success=False, error="performance failed")
-        )
-
-        by_name = {tool.name: tool.fn for tool in await mcp_server.list_tools()}
-
-        batch = await by_name["batch_process_files"](
-            input_data=BatchProcessInput(source_directory="./parts", operation="export")
-        )
-        table = await by_name["manage_design_table"](
-            input_data=DesignTableInput(operation="create")
-        )
-        workflow = await by_name["execute_workflow"](
-            input_data=WorkflowInput(
-                workflow_name="WF",
-                steps=[{"name": "step-1"}],
-                parallel_execution=False,
-                error_handling="stop",
-            )
-        )
-        template = await by_name["create_template"](
-            input_data=TemplateInput(template_type="part", template_name="StdPart")
-        )
-        optimize = await by_name["optimize_performance"](
-            input_data={"optimization_type": "general"}
-        )
-
-        assert batch["status"] == "error" and "batch failed" in batch["message"]
-        assert table["status"] == "error" and "table failed" in table["message"]
-        assert (
-            workflow["status"] == "error" and "workflow failed" in workflow["message"]
-        )
-        assert (
-            template["status"] == "error" and "template failed" in template["message"]
-        )
-        assert (
-            optimize["status"] == "error"
-            and "performance failed" in optimize["message"]
-        )
+        assert result["error_type"] == "invalid_input"
+        assert "`parameters` is no longer an input" in result["message"]
 
     @pytest.mark.unit
     def test_vba_generation_input_validation(self):
@@ -617,26 +86,6 @@ class TestAutomationTools:
         )
         assert valid_input.operation_type == "Extrusion"
         assert valid_input.parameters["depth"] == 25.0
-
-    @pytest.mark.unit
-    def test_batch_processing_input_validation(self):
-        """Test input validation for batch processing."""
-        # Valid input
-        valid_input = BatchProcessInput(
-            source_directory="./parts/", operation="Export STEP"
-        )
-        assert valid_input.source_directory == "./parts/"
-        assert valid_input.operation == "Export STEP"
-
-        # Test with optional parameters
-        full_input = BatchProcessInput(
-            source_directory="./parts/",
-            operation="Export STEP",
-            file_pattern="*.sldprt",
-            parallel_processing=True,
-        )
-        assert full_input.file_pattern == "*.sldprt"
-        assert full_input.parallel_processing is True
 
 
 def _make_mcp():
@@ -668,108 +117,51 @@ async def _get_tool(mcp, name: str):
 class TestAutomationExceptionPaths:
     """Test automation exception paths."""
 
-    @pytest.mark.asyncio
-    async def test_start_macro_recording_adapter_error(self):
-        """Line 341 — adapter has method but returns error."""
-        from solidworks_mcp.tools.automation import (
-            RecordMacroInput,
-            register_automation_tools,
-        )
 
-        mcp = _make_mcp()
-        adapter = MockSolidWorksAdapter({})
-        adapter.start_macro_recording = AsyncMock(
-            return_value=AdapterResult(
-                status=AdapterResultStatus.ERROR, error="rec error"
-            )
-        )
-        await register_automation_tools(mcp, adapter, _make_config())
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        ("Add 3 holes (M6), then save", "Add_3_holes_M6_then_save"),
+        ("3D export", "Macro_3D_export"),
+        ("___", "Macro"),
+        ("x" * 300, "x" * 255),
+    ],
+)
+def test_the_sub_name_is_a_valid_vba_name(description: str, expected: str) -> None:
+    from solidworks_mcp.tools.automation import _vba_sub_name
 
-        fn = await _get_tool(mcp, "automation_start_macro_recording")
-        result = await fn(RecordMacroInput(macro_name="test", description="d"))
-        assert result["status"] == "error"
+    assert _vba_sub_name(description) == expected
 
-    @pytest.mark.asyncio
-    async def test_start_macro_recording_exception(self):
-        """Lines 387-389 — exception in start_macro_recording."""
-        from solidworks_mcp.tools.automation import (
-            RecordMacroInput,
-            register_automation_tools,
-        )
 
-        mcp = _make_mcp()
-        adapter = MockSolidWorksAdapter({})
-        adapter.start_macro_recording = AsyncMock(side_effect=RuntimeError("boom"))
-        await register_automation_tools(mcp, adapter, _make_config())
+@pytest.mark.parametrize(
+    ("document", "doc_type"), [("Part", 1), ("Assembly", 2), ("Drawing", 3)]
+)
+def test_the_macro_checks_its_document_type(document: str, doc_type: int) -> None:
+    from solidworks_mcp.tools.automation import _vba_skeleton
 
-        fn = await _get_tool(mcp, "automation_start_macro_recording")
-        result = await fn(RecordMacroInput(macro_name="test", description="d"))
-        assert result["status"] == "error"
+    code = _vba_skeleton("Go", "two\nlines", document, error_handling=False)
 
-    @pytest.mark.asyncio
-    async def test_stop_macro_recording_exception(self):
-        """Line 412 — exception in stop_macro_recording."""
-        from solidworks_mcp.tools.automation import register_automation_tools
+    assert f"If swModel.GetType <> {doc_type} Then" in code
+    assert f"not a {document}" in code
+    assert "' Generated VBA code for: two lines" in code  # one comment line
+    assert "ErrorHandler" not in code
 
-        mcp = _make_mcp()
-        adapter = MockSolidWorksAdapter({})
 
-        # Patch the inner dict-return path to raise
-        with patch("solidworks_mcp.tools.tool_boundary.logger"):
-            await register_automation_tools(mcp, adapter, _make_config())
-            fn = await _get_tool(mcp, "automation_stop_macro_recording")
+def test_an_unknown_document_type_is_refused() -> None:
+    from pydantic import ValidationError
 
-            # Trigger exception by patching after registration
+    with pytest.raises(ValidationError):
+        VBAGenerationInput(target_document="Sketch")
+    with pytest.raises(ValidationError):
+        VBAGenerationInput(target_document=3)
+    assert VBAGenerationInput(target_document=" drawing ").target_document == "Drawing"
 
-            async def _raiser(input_data):
-                """Test raiser."""
 
-                raise RuntimeError("stop error")
+@pytest.mark.parametrize("name", ["main", "Main"])
+def test_a_sub_named_main_is_not_wrapped(name: str) -> None:
+    """A second main would be a duplicate definition; VBA names ignore case."""
+    from solidworks_mcp.tools.automation import _vba_skeleton
 
-            with patch.object(
-                fn,
-                "__wrapped__",
-                create=True,
-                new=AsyncMock(side_effect=RuntimeError("stop")),
-            ):
-                # stop_macro_recording refuses unconditionally: no adapter
-                # capability exists for it, so it never fabricates a
-                # "recording stopped" result.
-                result = await fn({})
-                assert result["status"] == "error"
+    code = _vba_skeleton(name, name, "Part", error_handling=False)
 
-    @pytest.mark.asyncio
-    async def test_batch_process_files_exception(self):
-        """Line 462 — exception in batch_process_files."""
-        from solidworks_mcp.tools.automation import (
-            BatchProcessInput,
-            register_automation_tools,
-        )
-
-        mcp = _make_mcp()
-        adapter = MockSolidWorksAdapter({})
-        adapter.batch_process_files = AsyncMock(side_effect=RuntimeError("batch boom"))
-        await register_automation_tools(mcp, adapter, _make_config())
-
-        fn = await _get_tool(mcp, "batch_process_files")
-        result = await fn(
-            BatchProcessInput(source_directory="/tmp", operation_type="rebuild")
-        )
-        assert result["status"] == "error"
-
-    @pytest.mark.asyncio
-    async def test_manage_design_table_exception(self):
-        """Line 506 — exception in manage_design_table."""
-        from solidworks_mcp.tools.automation import (
-            DesignTableInput,
-            register_automation_tools,
-        )
-
-        mcp = _make_mcp()
-        adapter = MockSolidWorksAdapter({})
-        adapter.manage_design_table = AsyncMock(side_effect=RuntimeError("dt boom"))
-        await register_automation_tools(mcp, adapter, _make_config())
-
-        fn = await _get_tool(mcp, "manage_design_table")
-        result = await fn(DesignTableInput(table_type="create", excel_file="test.xlsx"))
-        assert result["status"] == "error"
+    assert code.lower().count("sub main()") == 1

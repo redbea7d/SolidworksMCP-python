@@ -137,6 +137,7 @@ DEFAULT_RULES: tuple[ErrorRule, ...] = (
         patterns=(
             r"(requires|needs) an? (active )?(part|assembly|drawing)"
             r"( or (part|assembly|drawing))? document",
+            r"needs a sheet-metal part",
         ),
     ),
     ErrorRule(
@@ -162,6 +163,39 @@ DEFAULT_RULES: tuple[ErrorRule, ...] = (
             "end_condition 'ThroughAll' rather than retrying as is."
         ),
         patterns=(r"built no feature",),
+    ),
+    ErrorRule(
+        error_type=INVALID_INPUT,
+        hint=(
+            "face_point must lie on a flat face of the active part's body, in "
+            "mm. Read the faces' centres with select_face_edges, or sketch on "
+            "a plane instead."
+        ),
+        patterns=(r"face_point \[[^\]]*\] mm is not on a flat face",),
+    ),
+    ErrorRule(
+        error_type=INVALID_INPUT,
+        hint=(
+            "Use a configuration name from list_configurations, 'this' for the "
+            "active one or 'all'; create_configuration adds a new one."
+        ),
+        patterns=(r"No configuration named",),
+    ),
+    ErrorRule(
+        error_type=INVALID_INPUT,
+        hint=(
+            "Positions are [x, y] in sheet mm. Read the views' outlines and the "
+            "sheet size with check_drawing, then pick points inside a view (on "
+            "its edges for a dimension) and on the sheet."
+        ),
+        patterns=(
+            r"mm is off the sheet",
+            r"doesn't cross view",
+            r"isn't inside view",
+            r"Nothing to dimension at",
+            r"No sheet format '",
+            r"paper_size must be one of",
+        ),
     ),
     ErrorRule(
         error_type="not_found",

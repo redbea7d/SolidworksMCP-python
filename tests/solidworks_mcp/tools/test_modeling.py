@@ -440,6 +440,31 @@ class TestModelingTools:
         assert result["status"] == "success"
         assert result["dimension"]["value"] == 15.5
         assert result["dimension"]["units"] == "mm"
+        assert result["message"] == "Dimension D1@Sketch1 = 15.5 mm"
+
+    @pytest.mark.asyncio
+    async def test_get_dimension_of_a_count_has_no_unit(
+        self, mcp_server, mock_adapter, mock_config
+    ):
+        """A pattern's instance count: the number, no unit in the reply."""
+        await register_modeling_tools(mcp_server, mock_adapter, mock_config)
+        mock_adapter.get_dimension = AsyncMock(
+            return_value=Mock(
+                is_success=True, data={"value": 6.0, "units": None}, execution_time=0.1
+            )
+        )
+        tool_func = next(
+            t.fn for t in await mcp_server.list_tools() if t.name == "get_dimension"
+        )
+
+        result = await tool_func(GetDimensionInput(name="D1@CirPattern1"))
+
+        assert result["dimension"] == {
+            "name": "D1@CirPattern1",
+            "value": 6.0,
+            "units": None,
+        }
+        assert result["message"] == "Dimension D1@CirPattern1 = 6.0"
 
     @pytest.mark.asyncio
     async def test_set_dimension_value(self, mcp_server, mock_adapter, mock_config):
@@ -1136,7 +1161,7 @@ class TestFeatureEditingTools:
         result = await tool_func(SuppressFeatureInput(name=name, suppress=True))
 
         assert result["status"] == "success"
-        assert result["message"] == f"Suppressed {name}"
+        assert result["message"] == f"Suppressed {name} in Default"
         assert result["data"]["suppressed"] is True
 
     @pytest.mark.asyncio
@@ -1153,7 +1178,7 @@ class TestFeatureEditingTools:
         result = await tool_func(SuppressFeatureInput(name=name, suppress=False))
 
         assert result["status"] == "success"
-        assert result["message"] == f"Unsuppressed {name}"
+        assert result["message"] == f"Unsuppressed {name} in Default"
 
     @pytest.mark.asyncio
     async def test_suppress_feature_reports_when_state_unreadable(
@@ -2376,3 +2401,13 @@ async def test_revolve_about_a_named_axis(mcp_server, mock_adapter) -> None:
     )
     assert missing["status"] == "error"
     assert "create_axis" in missing["message"]
+
+
+@pytest.mark.parametrize("configurations", [[], [" "]])
+def test_configurations_must_name_one(configurations: list[str]) -> None:
+    from solidworks_mcp.tools.modeling import SetDimensionInput, SuppressFeatureInput
+
+    with pytest.raises(ValueError, match="'this', 'all' or a list"):
+        SuppressFeatureInput(name="Fillet1", configurations=configurations)
+    with pytest.raises(ValueError, match="'this', 'all' or a list"):
+        SetDimensionInput(name="D1@Sketch1", value=5, configurations=configurations)

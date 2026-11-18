@@ -27,12 +27,25 @@ class CreateSketchInput(CompatInput):
     """Input schema for creating a sketch.
 
     Attributes:
-        plane (str): The plane value.
+        plane (str | None): The plane to sketch on.
+        face_point (list[float] | None): A point on a flat face to sketch on
+            instead.
         sketch_name (str | None): The sketch name value.
     """
 
-    plane: str = Field(
-        description="Sketch plane name (e.g., 'Top', 'Front', 'Right', 'XY', 'XZ', 'YZ')"
+    plane: str | None = Field(
+        default=None,
+        description=(
+            "Sketch plane name (e.g., 'Top', 'Front', 'Right', 'XY', 'XZ', 'YZ', "
+            "or a plane made by create_reference_plane). Give this or face_point"
+        ),
+    )
+    face_point: list[float] | None = Field(
+        default=None,
+        description=(
+            "[x, y, z] in mm on a flat face of the part's body; the sketch opens "
+            "on that face and follows it when the model changes. Give this or plane"
+        ),
     )
     sketch_name: str | None = Field(
         default=None,
@@ -44,19 +57,20 @@ class CreateSketchInput(CompatInput):
     )
 
     def model_post_init(self, __context: Any) -> None:
-        """Provide model post init support for the create sketch input.
+        """Require exactly one of ``plane`` and ``face_point``.
 
         Args:
             __context (Any): The context value.
 
-        Returns:
-            None: None.
-
         Raises:
-            ValueError: Plane is required.
+            ValueError: When both or neither are given, or ``face_point`` is not
+                three numbers.
         """
-        if not self.plane.strip():
-            raise ValueError("plane is required")
+        has_plane = bool((self.plane or "").strip())
+        if has_plane == (self.face_point is not None):
+            raise ValueError("give exactly one of plane and face_point")
+        if self.face_point is not None and len(self.face_point) != 3:
+            raise ValueError("face_point must be [x, y, z] in millimetres")
 
 
 class AddLineInput(CompatInput):
@@ -292,43 +306,6 @@ class AddRelationInput(BaseModel):
     )
 
 
-class TutorialSimpleHoleInput(CompatInput):
-    """Input schema for creating a simple hole (tutorial example).
-
-    Attributes:
-        center_x (float): The center x value.
-        center_y (float): The center y value.
-        depth (float | None): The depth value.
-        diameter (float): The diameter value.
-        plane (str): The plane value.
-    """
-
-    plane: str = Field(description="Sketch plane for the hole")
-    center_x: float = Field(description="Hole center X coordinate in mm")
-    center_y: float = Field(description="Hole center Y coordinate in mm")
-    diameter: float = Field(description="Hole diameter in mm")
-    depth: float | None = Field(
-        default=None, description="Hole depth in mm (None for through hole)"
-    )
-
-    def model_post_init(self, __context: Any) -> None:
-        """Provide model post init support for the tutorial simple hole input.
-
-        Args:
-            __context (Any): The context value.
-
-        Returns:
-            None: None.
-
-        Raises:
-            ValueError: Depth must be positive.
-        """
-        if self.diameter <= 0:
-            raise ValueError("diameter must be positive")
-        if self.depth is not None and self.depth <= 0:
-            raise ValueError("depth must be positive")
-
-
 class CheckSketchDefinitionInput(CompatInput):
     """Input schema for checking sketch definition status.
 
@@ -341,6 +318,37 @@ class CheckSketchDefinitionInput(CompatInput):
         description="Optional sketch name. If omitted, checks the active or last sketch.",
     )
 
+
+class SketchConvertEntitiesInput(CompatInput):
+    """Input schema for copying model edges into the open sketch.
+
+    Attributes:
+        edge_points (list[list[float]]): A point in mm on each edge to copy.
+        face_point (list[float] | None): A point in mm on a face whose outline
+            to copy.
+        construction (bool): Make the copies construction geometry.
+    """
+
+    edge_points: list[list[float]] = Field(
+        default_factory=list, description="[x, y, z] in mm on each model edge to copy"
+    )
+    face_point: list[float] | None = Field(
+        default=None,
+        description="[x, y, z] in mm on a face whose whole outline to copy",
+    )
+    construction: bool = Field(
+        default=False, description="Make the copies construction geometry"
+    )
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.edge_points and self.face_point is None:
+            raise ValueError("give edge_points or face_point")
+        for point in [
+            *self.edge_points,
+            *([self.face_point] if self.face_point else []),
+        ]:
+            if len(point) != 3:
+                raise ValueError("each point must be [x, y, z] in mm")
 
 
 async def _apply_construction(
@@ -398,25 +406,43 @@ async def register_sketching_tools(
 
     @mcp.tool()
     async def create_sketch(input_data: CreateSketchInput) -> dict[str, Any]:
-        """Open a new sketch on a plane of the active part, ready for lines, circles and other sketch entities.
+        """Open a new sketch on a plane or a flat face of the active part, ready for lines, circles and other sketch entities.
 
         Use it first in every feature: sketch, draw, `exit_sketch`, then
         `create_extrusion` or `create_cut_extrude`. Planes: Front, Top, Right (or XY,
-        XZ, YZ), or a plane made by `create_reference_plane`. Coordinates in the sketch
-        are mm from the origin. Needs: an open part. Changes: adds a sketch and opens it
-        for editing; give `sketch_name` and `exit_sketch` names it that when it closes
-        it (SolidWorks won't rename an open sketch). Returns: `sketch` with `name` (the
-        name in the feature tree now) and `plane`, plus `name_on_exit` when you gave
-        `sketch_name`.
+        XZ, YZ), or a plane made by `create_reference_plane`. Or give `face_point`, a
+        point in mm on a flat face of the body: the sketch opens on that face and moves
+        with it when the model changes. Coordinates in the sketch are mm from the
+        origin. Needs: an open part. Changes: adds a sketch and opens it for editing;
+        give `sketch_name` and `exit_sketch` names it that when it closes it (SolidWorks
+        won't rename an open sketch). Returns: `sketch` with `name` (the name in the
+        feature tree now) and `plane` (or `face_point`), plus `name_on_exit` when you
+        gave `sketch_name`. A `face_point` not on a flat face fails with
+        `invalid_input`.
 
         Args:
-            input_data: The sketch. `plane` is required; `sketch_name` names it.
+            input_data: The sketch. Exactly one of `plane` and `face_point`;
+                `sketch_name` names it.
 
         Returns:
             dict[str, Any]: The new sketch.
         """
         input_data = normalize_input(input_data, CreateSketchInput)
-        result = await adapter.create_sketch(input_data.plane)
+        face_point = (
+            (
+                float(input_data.face_point[0]),
+                float(input_data.face_point[1]),
+                float(input_data.face_point[2]),
+            )
+            if input_data.face_point is not None
+            else None
+        )
+        if face_point is None:
+            result = await adapter.create_sketch(input_data.plane)
+            where = f"{input_data.plane} plane"
+        else:
+            result = await adapter.create_sketch(None, face_point)
+            where = f"the face at {list(face_point)} mm"
 
         require_success(result, context="Failed to create sketch")
         sketch_name = (
@@ -424,13 +450,13 @@ async def register_sketching_tools(
             if isinstance(result.data, dict)
             else result.data
         )
+        sketch: dict[str, Any] = {"name": sketch_name, "plane": input_data.plane}
+        if face_point is not None:
+            sketch["face_point"] = list(face_point)
         reply: dict[str, Any] = {
             "status": "success",
-            "message": f"Created sketch '{sketch_name}' on {input_data.plane} plane",
-            "sketch": {
-                "name": sketch_name,
-                "plane": input_data.plane,
-            },
+            "message": f"Created sketch '{sketch_name}' on {where}",
+            "sketch": sketch,
             "execution_time": result.execution_time,
         }
         names_on_exit.clear()  # a sketch left open is abandoned with its name
@@ -1129,6 +1155,41 @@ async def register_sketching_tools(
             "execution_time": result.execution_time,
         }
 
+    @mcp.tool()
+    async def sketch_convert_entities(
+        input_data: SketchConvertEntitiesInput,
+    ) -> dict[str, Any]:
+        """Copy model edges, or a face's whole outline, into the open sketch (Convert Entities).
+
+        Use it to sketch on an existing edge exactly, e.g. to cut a pocket that
+        follows a face, instead of re-drawing it at guessed coordinates. Pick edges
+        or a face with a point on each (mm). Needs: an open sketch
+        (`create_sketch`) and a part with those edges. Changes: adds the copied
+        entities, tied to the edges. Returns: `converted` with `entities` (ids for
+        the other sketch tools), `count` and `construction`.
+
+        Args:
+            input_data: The edges. Give `edge_points`, `face_point`, or both;
+                `construction` makes the copies construction geometry.
+
+        Returns:
+            dict[str, Any]: The entities added.
+        """
+        input_data = normalize_input(input_data, SketchConvertEntitiesInput)
+        result = await adapter.sketch_convert_entities(
+            input_data.edge_points or None,
+            input_data.face_point,
+            input_data.construction,
+        )
+        require_success(result, context="Failed to convert entities")
+        data = result.data if isinstance(result.data, dict) else {}
+        return {
+            "status": "success",
+            "message": f"Copied {data.get('count', 0)} edge(s) into the sketch",
+            "converted": data,
+            "execution_time": result.execution_time,
+        }
+
     # Additional sketch tools can be added here in the future:
     # - add_arc (3-point arc, center-point arc)
     # - add_spline (free-form curves)
@@ -1181,63 +1242,6 @@ async def register_sketching_tools(
                 "sketch_name": sketch_name,
                 "depth": 10.0,
                 "end_condition": "ThroughAll",
-            },
-        }
-
-    @mcp.tool()
-    async def tutorial_simple_hole(
-        input_data: TutorialSimpleHoleInput,
-    ) -> dict[str, Any]:
-        """Draw a circle on a plane and cut it as a hole, as one worked example.
-
-        Not available yet on real SolidWorks: its cut step has no COM implementation,
-        so the call draws and closes the sketch, then fails. It is planned for a future
-        release. Use `create_sketch`, `add_circle`, `exit_sketch` and
-        `create_cut_extrude` instead. Needs: an open part with a solid body.
-        Changes: adds a sketch (and, with the mock adapter, a cut). Returns: `tutorial`
-        with `plane`, `diameter`, `depth` and `steps`.
-
-        Args:
-            input_data: The hole. `plane`, `center_x`, `center_y` and `diameter`
-                (mm) are required; `depth` defaults to the diameter.
-
-        Returns:
-            dict[str, Any]: The steps run.
-        """
-        steps: list[dict[str, Any]] = []
-
-        sketch_result = await adapter.create_sketch(input_data.plane)
-        require_success(sketch_result, context="Failed to create sketch")
-        steps.append({"step": "Create sketch", "status": "success"})
-
-        circle_result = await adapter.add_sketch_circle(
-            input_data.center_x,
-            input_data.center_y,
-            input_data.diameter / 2,
-            False,
-        )
-        require_success(circle_result, context="Failed to add circle")
-        steps.append({"step": "Add circle", "status": "success"})
-
-        exit_result = await adapter.exit_sketch()
-        require_success(exit_result, context="Failed to exit sketch")
-        steps.append({"step": "Exit sketch", "status": "success"})
-
-        cut_depth = (
-            input_data.depth if input_data.depth is not None else input_data.diameter
-        )
-        cut_result = await adapter.create_cut("HoleSketch", cut_depth)
-        require_success(cut_result, context="Failed to create cut extrude")
-        steps.append({"step": "Create cut extrude", "status": "success"})
-
-        return {
-            "status": "success",
-            "message": "Completed simple hole tutorial",
-            "tutorial": {
-                "plane": input_data.plane,
-                "diameter": input_data.diameter,
-                "depth": input_data.depth,
-                "steps": steps,
             },
         }
 

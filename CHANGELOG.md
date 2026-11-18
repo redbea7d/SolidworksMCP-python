@@ -12,7 +12,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-11-09
+### Added
+
+- **What each tool needs from SolidWorks** (queue item 16, #79): every tool
+  has a `needs:` tag, `nothing`, `installed` or `running`, from one table
+  (`tools/requirements.py`). The tools overview lists the 20 tools that
+  don't need SolidWorks running, and says any licence that runs SolidWorks
+  is enough: no tool calls an add-in or a Professional- or Premium-only
+  feature.
+- **Sheet metal** (queue item 15, #57), checked live on SolidWorks 2026:
+  `create_base_flange` (a plate or a bent profile, with thickness, bend
+  radius and K-factor read back), `add_edge_flange` (a flange off an edge
+  picked by a point, its length measured from that edge),
+  `create_sketched_bend` and `set_flat_pattern` (flatten or fold, with the
+  blank's size). With the existing `export_flat_pattern`, a part goes from
+  sketch to DXF; the flanged test plate's blank measured 78.7124 mm
+  against 78.712 by hand. `export_flat_pattern` now asks for a part
+  never saved to be saved first (SolidWorks reads it from its file).
+  139 tools.
+
+- **Shorter tool lists** (queue item 14, #176), checked live: `SOLIDWORKS_MCP_TOOLSETS`
+  lists only some groups of tools (`core`, `drawing`, `automation`, `vba`,
+  `docs`; `all` by default), and `SOLIDWORKS_MCP_TOOL_MODE=search` lists
+  four tools in place of the rest, `search_tools` and `call_tool` among
+  them: about 900 tokens a turn instead of about 55,000. Search mode
+  leaves deprecated tools out, so a search finds their replacements. The server's
+  instructions and the skill follow the settings, `selftest` reports them,
+  and the installation guide has the measured sizes. Nothing changes with
+  neither set.
+
+- **`save_as_template`** (queue item 21), checked live on SolidWorks 2026:
+  saves the active part, assembly or drawing as a `.prtdot`, `.asmdot` or
+  `.drwdot`, by path or by name into SolidWorks' template folder, so
+  `create_part` (and the others) can start the next document with the same
+  units, material and properties. SolidWorks then has the template open in
+  place of the document, as File > Save As does, and the reply says so.
+  135 tools.
+- **Material properties** (queue item 20), checked live on SolidWorks 2026:
+  `get_material` also returns the
+  material's elastic modulus, Poisson's ratio, shear modulus, tensile, yield
+  and compressive strength, density, thermal expansion, conductivity and
+  specific heat, in SI units with SolidWorks' labels, read from the
+  material's library entry. With `material` it reads any library material
+  without assigning it, and needs no open document.
+
+- **The drawing pack** (queue item 12, #102), stable, checked live
+  on SolidWorks 2026: `create_section_view` (a line across a view), `create_detail_view`
+  (a circle in a view, at a scale), `add_dimension` (edges picked by sheet
+  points, the value read back), `auto_dimension_view` (baseline or chain,
+  counted before and after), `update_title_block` (revision, title and the
+  rest, written to the properties the format shows), `update_sheet_format`
+  (a new format and paper size, the views kept) and `check_drawing`. No
+  tool is planned any more.
+
+- **Changes in chosen configurations** (queue item 13, section 3):
+  `set_dimension` and `suppress_feature` take `configurations`: `this` (the
+  active one, as before), `all`, or a list of names, and the reply names
+  where the change applied. An unknown name is refused as `invalid_input`
+  before anything changes.
+- **The Hole Wizard library** (queue item 22), checked live on SolidWorks
+  2026: `list_hole_sizes` lists a
+  standard's hole types and sizes, or one size's dimensions, read-only from
+  SolidWorks' installed Toolbox library (no SolidWorks needed). `create_hole`
+  now checks the size there first and refuses one that doesn't exist, naming
+  the nearest; takes `fastener` to pick a hole type (dowel holes, a bolt's
+  counterbore); and adds the standards `ansi_metric`, `din` and `jis`. On a
+  simple hole `M6` now means a screw clearance hole and `6` a drilled one.
+  134 tools.
+- **Configurations** (queue item 13), checked live on SolidWorks 2026:
+  `create_configuration` (optionally derived from another),
+  `activate_configuration` and `delete_configuration` (not the active one or
+  the only one). `list_configurations` now also reports `active`. With
+  design tables out (they don't work through COM here), this is how an agent
+  makes variants of a part. 130 tools become 133.
+- **Seven part-feature tools** (queue item 11, #105), checked live on
+  SolidWorks 2026: `create_hole` (Hole Wizard: simple, counterbore,
+  countersink or tapped, ISO or ANSI inch, at a point on a flat face, and
+  with `positions` several holes in one feature, the way you place holes on
+  sketch points by hand),
+  `add_cosmetic_thread`, `pattern_linear` (a row or a grid), `create_shell`,
+  `add_draft`, `create_rib`, and `sketch_convert_entities` (copy model edges
+  or a face's outline into the open sketch). Faces and edges are picked by a
+  point in mm. Each solid feature reports its volume change, and one that
+  changed nothing is removed again and reported as a failure. 123 tools
+  become 130. A simple hole through all, which SolidWorks won't make, is
+  made blind through the part with a warning; a tapped hole's thread stops
+  at 80% of a blind hole's depth. A new demo drills a plate with each hole
+  type, a mirror and a ring of six.
+- **Demo GIFs:** a caption can hold for a set time (used to say a failure
+  is on purpose before it happens), and motion GIFs play at 2.5x instead of
+  5x. Every motion GIF now opens on its finished result for 2 s: most opened
+  on SolidWorks' empty start screen, so their README cells looked blank (the
+  monitor stand's had lost its 2026-11-06 fix when it was re-recorded).
+  `make_demo_gif.py --poster` adds that frame to a GIF already built without
+  re-encoding it.
+- **Our own `llms.txt`**, served at the docs site's root and built from the
+  docs: each entry's title and summary are copied word for word from its
+  page, and a test fails when the file and the pages disagree, when it
+  links outside this project, or when it holds HTML or hidden characters.
+  Nothing in it is written by hand. Ten pages got a real opening paragraph
+  to serve as their summary.
+- **Every link in the docs is checked.** Links within the project (pages,
+  files, anchors, repository files) on every test run; every link to
+  another site after each docs deploy and weekly, failing a dead link or a
+  redirect to a different site, with a report of every URL
+  (`python -m solidworks_mcp.doc_links check-external`). The first run
+  fixed one moved link (the Anthropic console).
+- **`create_sketch` takes `face_point`** (#206): a point in mm on a flat
+  face of the body, in place of `plane`. The sketch opens on that face and
+  moves with it when the model changes, so a pocket cut from it follows a
+  height edited later. Give exactly one of `plane` and `face_point`; a point
+  in the air or on a curved face fails with `invalid_input`.
+
+- **A `deprecated` support level** (#174). A deprecated tool still works;
+  its description and successful results open "Deprecated: use `<tool>`.",
+  it is tagged `level:deprecated`, and it is removed at the next major
+  release. The progress image leaves deprecated tools out of its count.
+- **A verb list for tool names**, in the tool description standard: new
+  tools start with `create_`, `add_`, `get_`, `list_`, `set_` and the rest;
+  the names registered before it are listed as exceptions.
+- **`get_model_info` reports the file's details**: `size_bytes`, `created`
+  and `modified`, read from the file on disk (null for a document never
+  saved).
+- **`save_file` takes `overwrite`**, and checks a new `file_path` before
+  SolidWorks is asked: the folder exists and is writable, the extension
+  matches the document (.sldprt, .sldasm, .slddrw), and no file is there.
+
+### Fixed
+
+- **`add_fillet` on the current selection** (empty `edge_names`, after
+  `select_face_edges`) built no fillet: reading the volume first rebuilt
+  the part, which cleared the selection. It no longer reads the volume in
+  that case. Found by queue item 14's live check.
+
+Found building the monitor stand demo (#206):
+
+- **`list_features` returns rows in tree order.** When SolidWorks stopped
+  the forward walk at the system folders, the rest came newest first.
+- **`verify_model` counts a plane the agent made.** It skipped the first
+  three reference planes in row order, so with rows newest first it counted
+  `Front Plane` and skipped `Plane1`.
+- **`list_model_dimensions` lists each dimension once, under its own
+  feature.** It walks the tree the way `list_features` does, and takes each
+  dimension's feature from its full name: `D1@Plane1` is listed under
+  `Plane1`, never also under a cut sketched on that plane.
+- **`export_stl` keeps its STL options.** `SaveAs2` was called with six
+  arguments of the wrong types, so it always failed with a type mismatch
+  and `SaveAs3` wrote the file without merging the bodies. It now gets its
+  eight arguments; if it still writes nothing, `SaveAs3` writes the file and
+  the reply's `warning` says the options weren't applied.
+
+### Changed
+
+- `check_drawing_standards`, which never worked, is now `check_drawing`: a
+  read-only completeness check whose findings name the tool that fixes each.
+- **The monitor stand demo** sketches its pocket on the stand's top face,
+  with no reference plane, and its camera turns to an isometric view after
+  each feature (`--look` in the script).
+
+- **`save_file` keeps a file already at `file_path`** unless `overwrite`
+  is on, and refuses a path with another document type's extension. Before,
+  it replaced the file. Saving in place (no `file_path`) is unchanged.
+
+### Deprecated
+
+Each still works until 3.0.0; use the tool named instead (#174):
+
+- `load_part`, `load_assembly`: use `open_model`.
+- `save_part`, `save_assembly`: use `save_file` (`pack_and_go_assembly` to
+  copy an assembly with its referenced parts).
+- `calculate_mass_properties`: use `get_mass_properties`.
+- `get_file_properties`: use `get_model_info`.
+- `add_drawing_view`: use `create_drawing_view`.
+- `sketch_tutorial_simple_hole`: no replacement; build the hole with the
+  sketching and feature tools.
+
+### Removed
+
+33 tools that were registered but never implemented: every call returned
+`not_supported` (#174). Clients that listed them only ever got an error.
+Why each one went, and what does its job now, is in `openspec/queue.md`
+("Removed tools").
+
+- Analysis: `analyze_geometry`, `get_material_properties`.
+- Automation: `automation_start_macro_recording`,
+  `automation_stop_macro_recording`, `batch_process_files`,
+  `create_template`, `execute_workflow`, `manage_design_table`,
+  `optimize_performance`. `manage_design_table` was checked live first: on
+  SolidWorks 2026 the design table is inserted, but SolidWorks can't open it
+  in Excel to read it and makes no configurations from it.
+- Drawing: `add_annotation`.
+- Drawing analysis: `analyze_drawing_annotations`,
+  `analyze_drawing_comprehensive`, `analyze_drawing_dimensions`,
+  `analyze_drawing_views`, `check_drawing_compliance`,
+  `generate_drawing_report`, `validate_drawing_completeness`.
+- Export: `batch_export`.
+- File management: `batch_file_operations`, `convert_file_format`,
+  `manage_file_properties`.
+- Macros: `analyze_macro`, `batch_execute_macros`, `create_macro_library`,
+  `optimize_macro`, `start_macro_recording`, `stop_macro_recording`.
+- Sketching: `tutorial_simple_hole`.
+- Templates: `apply_template`, `batch_apply_template`, `extract_template`,
+  `list_template_library`, `save_to_template_library`.
+
+The seven planned tools left are drawing tools; each names the queue item
+that builds them (the drawing pack).
+
+## [2.0.0] - 2026-11-12
 
 ### Added
 
@@ -136,6 +342,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reply carries a `warning` naming everything else it deleted (a
     sketch takes the features built from it).
 
+- **The experimental tools' faults** (item 8 in the work queue):
+  - `pack_and_go_assembly` no longer closes every open document without
+    saving when the assembly can't be opened (it packs the open copy, or
+    fails and closes nothing), and no longer deletes everything already
+    in `target_dir`: with `overwrite` it replaces only the files it
+    writes, and `copied_files` lists only those. A preview that can't be
+    written gives a `warning`. On SolidWorks 2026, SolidWorks' own Pack and
+    Go listed and copied only the assembly, not its parts, and reported
+    success; the tool now copies the saved files `GetDependencies2` lists,
+    under their own names, and its `warning` names open files whose unsaved
+    changes aren't in the copy. The reply's `save_statuses` and
+    `all_files_saved` are replaced by `unsaved_changes`.
+  - `get_dimension` reports an angle in degrees (`units: "deg"`) and a
+    count with no unit; it used to multiply every value by 1000 and call
+    it mm.
+  - `open_model`, `load_part`, `load_assembly` and `list_configurations`
+    read the configuration's `Name`; they called a `GetName` method
+    SolidWorks doesn't have, so they always reported an assumed
+    "Default". A missing file is `not_found` before SolidWorks is asked.
+  - `generate_vba_code` writes a valid Sub name (returned as `sub_name`),
+    checks the active document's type, and prints with `Debug.Print`
+    instead of a `MsgBox` that blocked SolidWorks when the macro ran.
+  - `classify_feature_tree` fails when it can't read the model, instead
+    of classifying an empty one. On a part it no longer answers
+    "assembly" ("Material" contains "mate") or "sheet metal" (the tree's
+    folders contain "fold"); a known document type decides, and folders
+    aren't counted as features.
+  - `close_model` closes the document SolidWorks made active after the
+    last close; a second close in a row used to fail with "No active
+    model to close" while documents were still open.
+
 - **`create_extrusion`'s reply says what was built** (#209): the end
   condition SolidWorks used (`MidPlane` for `both_directions`), and the
   thin wall. It used to echo `direction: blind`, so an agent concluded
@@ -195,6 +432,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `add_drawing_view` refuses an `operation` other than `add`. Moments of
   inertia from `calculate_mass_properties` are a million times larger
   than before, because they are now in the kg·mm² their label always said.
+
+- **BREAKING: more inputs that did nothing are refused** (item 8):
+  `compare_templates`' `comparison_type`, `comparison_depth`,
+  `include_properties`, `include_dimensions`, `include_materials` and
+  `generate_report` (it compares the two files only), and
+  `generate_vba_code`'s `parameters` and `code_style` (its reply loses
+  `style`). `pack_and_go_assembly` requires `source_path` and
+  `target_dir`, and `export_preview` is off by default, as its
+  description always said. `compare_drawing_versions` takes a typed
+  input. `get_dimension`'s angles and counts change value (see Fixed),
+  and `load_part` / `load_assembly` report `configuration: null` when
+  SolidWorks doesn't say.
+
+- **`generate_vba_code`'s macro opens with a `Sub main()`** that calls the
+  named Sub (`sub_name`). SolidWorks runs a `.swb` macro only through
+  `main`, so `execute_macro` runs it with no `proc_name`.
+- **`comtypes` is no longer a dependency.** Pack and Go was its only user,
+  and it now copies the files `GetDependencies2` lists.
+- **No tool is experimental any more**: the ten from item 8 passed live
+  tests on SolidWorks 2026 and are stable.
 
 - **Building the API index needs SolidWorks installed, not running**, and
   never starts or calls SolidWorks. The lookups build the index themselves,

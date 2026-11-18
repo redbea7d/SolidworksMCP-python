@@ -535,6 +535,84 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
             "save_file", lambda adapter: adapter.save_file(file_path)
         )
 
+    async def create_base_flange(
+        self,
+        thickness: float,
+        bend_radius: float,
+        k_factor: float = 0.5,
+        depth: float | None = None,
+        sketch: str | None = None,
+        reverse: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """A sheet-metal base flange from a sketch. Using the pool."""
+        return await self._execute_with_pool(
+            "create_base_flange",
+            lambda adapter: adapter.create_base_flange(
+                thickness, bend_radius, k_factor, depth, sketch, reverse
+            ),
+        )
+
+    async def add_edge_flange(
+        self,
+        edge_point: list[float],
+        length: float,
+        angle: float = 90.0,
+        bend_radius: float | None = None,
+        flip: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """A flange off the sheet edge nearest a point. Using the pool."""
+        return await self._execute_with_pool(
+            "add_edge_flange",
+            lambda adapter: adapter.add_edge_flange(
+                edge_point, length, angle, bend_radius, flip
+            ),
+        )
+
+    async def create_sketched_bend(
+        self,
+        angle: float = 90.0,
+        bend_radius: float | None = None,
+        sketch: str | None = None,
+        reverse: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Bend the sheet along a sketched line. Using the pool."""
+        return await self._execute_with_pool(
+            "create_sketched_bend",
+            lambda adapter: adapter.create_sketched_bend(
+                angle, bend_radius, sketch, reverse
+            ),
+        )
+
+    async def set_flat_pattern(self, flat: bool) -> AdapterResult[dict[str, Any]]:
+        """Flatten the sheet-metal part, or fold it back. Using the pool."""
+        return await self._execute_with_pool(
+            "set_flat_pattern",
+            lambda adapter: adapter.set_flat_pattern(flat),
+        )
+
+    async def get_template_folders(self) -> AdapterResult[dict[str, Any]]:
+        """Read the template folders using pool.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: The folders and the template extension.
+        """
+        return await self._execute_with_pool(
+            "get_template_folders", lambda adapter: adapter.get_template_folders()
+        )
+
+    async def save_as_template(self, file_path: str) -> AdapterResult[dict[str, Any]]:
+        """Save the active document as a template using pool.
+
+        Args:
+            file_path: The template's full path.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: The template written.
+        """
+        return await self._execute_with_pool(
+            "save_as_template", lambda adapter: adapter.save_as_template(file_path)
+        )
+
     async def create_part(
         self,
         name: str | None = None,
@@ -779,6 +857,191 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
             ),
         )
 
+    async def pattern_linear(
+        self,
+        features: list[str],
+        direction: list[float] | str,
+        count: int,
+        spacing: float,
+        direction2: list[float] | str | None = None,
+        count2: int = 1,
+        spacing2: float = 0.0,
+        reverse: bool = False,
+        reverse2: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Repeat features along one or two directions using pool."""
+        return await self._execute_with_pool(
+            "pattern_linear",
+            lambda adapter: adapter.pattern_linear(
+                features,
+                direction,
+                count,
+                spacing,
+                direction2,
+                count2,
+                spacing2,
+                reverse,
+                reverse2,
+            ),
+        )
+
+    async def create_shell(
+        self,
+        thickness: float,
+        faces: list[list[float]],
+        outward: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Hollow the body to a wall thickness using pool."""
+        return await self._execute_with_pool(
+            "create_shell",
+            lambda adapter: adapter.create_shell(thickness, faces, outward),
+        )
+
+    async def add_draft(
+        self,
+        angle: float,
+        faces: list[list[float]],
+        neutral_face: list[float],
+        reverse: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Draft faces against a neutral face using pool."""
+        return await self._execute_with_pool(
+            "add_draft",
+            lambda adapter: adapter.add_draft(angle, faces, neutral_face, reverse),
+        )
+
+    async def create_rib(
+        self,
+        sketch: str,
+        thickness: float,
+        both_sides: bool = True,
+        flip_material: bool = False,
+        normal_to_sketch: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a rib from an open sketch using pool."""
+        return await self._execute_with_pool(
+            "create_rib",
+            lambda adapter: adapter.create_rib(
+                sketch, thickness, both_sides, flip_material, normal_to_sketch
+            ),
+        )
+
+    async def list_hole_sizes(
+        self,
+        standard: str,
+        hole_type: str,
+        fastener: str | None = None,
+        size: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """List the Hole Wizard hole types and sizes using pool."""
+        return await self._execute_with_pool(
+            "list_hole_sizes",
+            lambda adapter: adapter.list_hole_sizes(
+                standard, hole_type, fastener, size
+            ),
+        )
+
+    async def create_hole(
+        self,
+        face_point: list[float],
+        hole_type: str,
+        standard: str,
+        size: str,
+        end_condition: str = "through_all",
+        depth: float | None = None,
+        positions: list[list[float]] | None = None,
+        fastener: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a Hole Wizard hole at a point on a flat face using pool."""
+        return await self._execute_with_pool(
+            "create_hole",
+            lambda adapter: adapter.create_hole(
+                face_point,
+                hole_type,
+                standard,
+                size,
+                end_condition,
+                depth,
+                positions,
+                fastener,
+            ),
+        )
+
+    async def add_cosmetic_thread(
+        self,
+        edge_point: list[float],
+        size: str,
+        diameter: float,
+        end_type: str = "blind",
+        depth: float | None = None,
+        standard: str = "iso",
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a cosmetic thread on a circular edge using pool."""
+        return await self._execute_with_pool(
+            "add_cosmetic_thread",
+            lambda adapter: adapter.add_cosmetic_thread(
+                edge_point, size, diameter, end_type, depth, standard
+            ),
+        )
+
+    async def sketch_convert_entities(
+        self,
+        edge_points: list[list[float]] | None = None,
+        face_point: list[float] | None = None,
+        construction: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Copy model edges or a face outline into the open sketch using pool."""
+        return await self._execute_with_pool(
+            "sketch_convert_entities",
+            lambda adapter: adapter.sketch_convert_entities(
+                edge_points, face_point, construction
+            ),
+        )
+
+    async def create_configuration(
+        self,
+        name: str,
+        parent: str | None = None,
+        description: str = "",
+        activate: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a configuration to the active model using pool."""
+        return await self._execute_with_pool(
+            "create_configuration",
+            lambda adapter: adapter.create_configuration(
+                name, parent, description, activate
+            ),
+        )
+
+    async def activate_configuration(
+        self,
+        name: str,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Make a configuration active using pool."""
+        return await self._execute_with_pool(
+            "activate_configuration",
+            lambda adapter: adapter.activate_configuration(name),
+        )
+
+    async def delete_configuration(
+        self,
+        name: str,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Delete a configuration using pool."""
+        return await self._execute_with_pool(
+            "delete_configuration",
+            lambda adapter: adapter.delete_configuration(name),
+        )
+
+    async def active_configuration(
+        self,
+    ) -> AdapterResult[str]:
+        """Read the active configuration's name using pool."""
+        return await self._execute_with_pool(
+            "active_configuration",
+            lambda adapter: adapter.active_configuration(),
+        )
+
     async def create_revolve(
         self, params: RevolveParameters
     ) -> AdapterResult[SolidWorksFeature]:
@@ -826,17 +1089,23 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
 
     # Sketch operations
 
-    async def create_sketch(self, plane: str) -> AdapterResult[str]:
+    async def create_sketch(
+        self,
+        plane: str | None,
+        face_point: tuple[float, float, float] | None = None,
+    ) -> AdapterResult[str]:
         """Create sketch using pool.
 
         Args:
-            plane (str): The plane value.
+            plane (str | None): The plane's name; None with ``face_point``.
+            face_point (tuple[float, float, float] | None): A point in mm on a
+                flat face, in place of ``plane``.
 
         Returns:
             AdapterResult[str]: The result produced by the operation.
         """
         return await self._execute_with_pool(
-            "create_sketch", lambda adapter: adapter.create_sketch(plane)
+            "create_sketch", lambda adapter: adapter.create_sketch(plane, face_point)
         )
 
     async def add_line(
@@ -1260,31 +1529,35 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
 
     # Dimension operations
 
-    async def get_dimension(self, name: str) -> AdapterResult[float]:
+    async def get_dimension(self, name: str) -> AdapterResult[dict[str, Any]]:
         """Get dimension using pool.
 
         Args:
             name (str): The name value.
 
         Returns:
-            AdapterResult[float]: The result produced by the operation.
+            AdapterResult[dict[str, Any]]: ``value`` and ``units`` (mm, deg or None).
         """
         return await self._execute_with_pool(
             "get_dimension", lambda adapter: adapter.get_dimension(name)
         )
 
-    async def set_dimension(self, name: str, value: float) -> AdapterResult[None]:
+    async def set_dimension(
+        self, name: str, value: float, configurations: str | list[str] = "this"
+    ) -> AdapterResult[dict[str, Any]]:
         """Set dimension using pool.
 
         Args:
             name (str): The name value.
             value (float): The value value.
+            configurations (str | list[str]): "this", "all" or names.
 
         Returns:
-            AdapterResult[None]: The result produced by the operation.
+            AdapterResult[dict[str, Any]]: ``configurations``, the names set in.
         """
         return await self._execute_with_pool(
-            "set_dimension", lambda adapter: adapter.set_dimension(name, value)
+            "set_dimension",
+            lambda adapter: adapter.set_dimension(name, value, configurations),
         )
 
     async def set_units(self, unit_system: str) -> AdapterResult[dict[str, Any]]:
@@ -1440,6 +1713,91 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
             "add_note", lambda adapter: adapter.add_note(payload)
         )
 
+    async def create_section_view(
+        self,
+        view: str,
+        line_start: list[float],
+        line_end: list[float],
+        position: list[float],
+        label: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a section view cut along a line across a drawing view using pool."""
+        return await self._execute_with_pool(
+            "create_section_view",
+            lambda adapter: adapter.create_section_view(
+                view, line_start, line_end, position, label
+            ),
+        )
+
+    async def create_detail_view(
+        self,
+        view: str,
+        center: list[float],
+        radius: float,
+        position: list[float],
+        scale: str = "2:1",
+        label: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a detail view of a circle in a drawing view using pool."""
+        return await self._execute_with_pool(
+            "create_detail_view",
+            lambda adapter: adapter.create_detail_view(
+                view, center, radius, position, scale, label
+            ),
+        )
+
+    async def add_dimension(
+        self,
+        dimension_type: str,
+        entity1_point: list[float],
+        position: list[float],
+        entity2_point: list[float] | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add one dimension between drawing entities picked at sheet points using pool."""
+        return await self._execute_with_pool(
+            "add_dimension",
+            lambda adapter: adapter.add_dimension(
+                dimension_type, entity1_point, position, entity2_point
+            ),
+        )
+
+    async def auto_dimension_view(
+        self,
+        view: str,
+        scheme: str = "baseline",
+    ) -> AdapterResult[dict[str, Any]]:
+        """Auto-dimension one drawing view using pool."""
+        return await self._execute_with_pool(
+            "auto_dimension_view",
+            lambda adapter: adapter.auto_dimension_view(view, scheme),
+        )
+
+    async def update_sheet_format(
+        self,
+        sheet_format: str,
+        paper_size: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Change the active sheet's format and paper size, keeping its views using pool."""
+        return await self._execute_with_pool(
+            "update_sheet_format",
+            lambda adapter: adapter.update_sheet_format(sheet_format, paper_size),
+        )
+
+    async def update_title_block(
+        self,
+        fields: dict[str, str],
+    ) -> AdapterResult[dict[str, Any]]:
+        """Write title-block fields on the active drawing using pool."""
+        return await self._execute_with_pool(
+            "update_title_block", lambda adapter: adapter.update_title_block(fields)
+        )
+
+    async def drawing_report(self) -> AdapterResult[dict[str, Any]]:
+        """Read what check_drawing judges on the active drawing using pool."""
+        return await self._execute_with_pool(
+            "drawing_report", lambda adapter: adapter.drawing_report()
+        )
+
     async def list_drawing_views(self) -> AdapterResult[list[str]]:
         """List drawing views using pool.
 
@@ -1503,20 +1861,21 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
         )
 
     async def suppress_feature(
-        self, name: str, suppress: bool = True
+        self, name: str, suppress: bool = True, configurations: str | list[str] = "this"
     ) -> AdapterResult[dict[str, Any]]:
         """Suppress or unsuppress a feature using pool.
 
         Args:
             name (str): Feature name.
             suppress (bool): True to suppress, False to unsuppress.
+            configurations (str | list[str]): "this", "all" or names.
 
         Returns:
             AdapterResult[dict[str, Any]]: The result produced by the operation.
         """
         return await self._execute_with_pool(
             "suppress_feature",
-            lambda adapter: adapter.suppress_feature(name, suppress),
+            lambda adapter: adapter.suppress_feature(name, suppress, configurations),
         )
 
     async def rename_feature(
@@ -1635,11 +1994,13 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
     async def get_material(
         self,
         configuration: str | None = None,
+        material: str | None = None,
+        database: str | None = None,
     ) -> AdapterResult[dict[str, Any]]:
-        """Read the material assigned to the active part using pool."""
+        """Read a part's or a library material using pool."""
         return await self._execute_with_pool(
             "get_material",
-            lambda adapter: adapter.get_material(configuration),
+            lambda adapter: adapter.get_material(configuration, material, database),
         )
 
     async def set_material(

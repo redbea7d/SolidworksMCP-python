@@ -13,13 +13,17 @@ The recorder never calls SolidWorks. ``ImageGrab`` copies what is on the
 screen, so SolidWorks must be in front and unobscured while recording (the
 stills use ``PrintWindow``, which works when covered but sends the window a
 message every time - too much at 12 a second for SolidWorks 2026, COM pitfall
-#26).
+#26). A frame is grabbed only while SolidWorks (or one of its dialogs) is the
+foreground window; otherwise the screen there shows whatever covers it, such
+as an editor with private files open, and that must never reach a GIF.
 
 Files, under ``<SW_DEMO_CAPTURE_DIR>/recording/<test>/`` (or
 ``tests/.generated/recordings/<test>/`` without a capture directory):
 
 - ``frame-<ms>.png``: a changed frame, ``ms`` after the recording started;
 - ``caption-<ms>.png``: an evidence caption panel, shown from then on;
+  ``caption-<ms>-hold<hold ms>.png`` for one the GIF holds at least that long
+  (a narrated step, such as a failure the demo makes on purpose);
 - ``end-<ms>``: when the recording stopped.
 """
 
@@ -48,6 +52,7 @@ class Recorder:
         self.directory = directory
         self.interval = 1.0 / max(fps, 0.5)
         self.frames = 0
+        self.skipped = 0
         self.error: str | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -77,9 +82,17 @@ class Recorder:
         (self.directory / f"end-{self._ms():08d}").touch()
 
     def caption(
-        self, label: str, payload: Any, call: str | None, max_lines: int | None = None
+        self,
+        label: str,
+        payload: Any,
+        call: str | None,
+        max_lines: int | None = None,
+        hold: float | None = None,
     ) -> None:
-        """Save an evidence caption, shown under every frame from now on."""
+        """Save an evidence caption, shown under every frame from now on.
+
+        ``hold`` (seconds) makes the GIF show it at least that long.
+        """
         from tests.live.evidence import caption_panel
 
         width = self._width or 1280
@@ -87,7 +100,8 @@ class Recorder:
             panel = caption_panel(width, label, payload, call)
         else:
             panel = caption_panel(width, label, payload, call, max_lines)
-        panel.save(self.directory / f"caption-{self._ms():08d}.png")
+        suffix = f"-hold{round(hold * 1000)}" if hold else ""
+        panel.save(self.directory / f"caption-{self._ms():08d}{suffix}.png")
 
     def _run(self) -> None:
         """Grab, compare and save until stopped; a failure ends the recording."""
@@ -97,7 +111,10 @@ class Recorder:
             hwnd = solidworks_window()
             while not self._stop.is_set():
                 began = time.monotonic()
-                self._keep_if_changed(self._grab(hwnd))
+                if _in_front(hwnd):
+                    self._keep_if_changed(self._grab(hwnd))
+                else:
+                    self.skipped += 1
                 self._stop.wait(max(0.0, self.interval - (time.monotonic() - began)))
         except Exception as exc:  # noqa: BLE001 - a recording never fails a test
             self.error = f"{type(exc).__name__}: {exc}"
@@ -125,6 +142,15 @@ class Recorder:
         self._width = image.width
         image.save(self.directory / f"frame-{self._ms():08d}.png", compress_level=1)
         self.frames += 1
+
+
+def _in_front(hwnd: int) -> bool:
+    """Whether ``hwnd``, or a window it owns (a dialog), is in the foreground."""
+    import win32gui
+
+    front = win32gui.GetForegroundWindow()
+    ga_rootowner = 3
+    return front == hwnd or win32gui.GetAncestor(front, ga_rootowner) == hwnd
 
 
 def _directory(test: str) -> Path:
@@ -160,18 +186,29 @@ def stop(recorder: Recorder) -> None:
     if _ACTIVE is recorder:
         _ACTIVE = None
     print(f"[recorder] {recorder.frames} frames in {recorder.directory}", flush=True)
+    if recorder.skipped:
+        print(
+            f"[recorder] {recorder.skipped} grabs skipped: SolidWorks wasn't in "
+            "front; keep it in front and uncovered while recording",
+            flush=True,
+        )
 
 
 def note_caption(
-    label: str, payload: Any, call: str | None, max_lines: int | None = None
+    label: str,
+    payload: Any,
+    call: str | None,
+    max_lines: int | None = None,
+    hold: float | None = None,
 ) -> None:
     """Stamp an evidence caption into the running recording, if there is one.
 
-    ``max_lines`` overrides the caption's usual line limit (see ``evidence``).
+    ``max_lines`` overrides the caption's usual line limit (see ``evidence``);
+    ``hold`` is the least time, in seconds, the GIF shows it.
     """
     if _ACTIVE is None:
         return
     try:
-        _ACTIVE.caption(label, payload, call, max_lines)
+        _ACTIVE.caption(label, payload, call, max_lines, hold)
     except Exception as exc:  # noqa: BLE001 - a recording never fails a test
         print(f"[recorder] caption skipped: {exc}", flush=True)

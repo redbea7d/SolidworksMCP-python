@@ -434,6 +434,97 @@ class SolidWorksAdapter(ABC):
             error="save_file is not implemented by this adapter",
         )
 
+    async def create_base_flange(
+        self,
+        thickness: float,
+        bend_radius: float,
+        k_factor: float = 0.5,
+        depth: float | None = None,
+        sketch: str | None = None,
+        reverse: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """A sheet-metal base flange from a sketch.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Error unless the adapter implements it.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="create_base_flange is not implemented by this adapter",
+        )
+
+    async def add_edge_flange(
+        self,
+        edge_point: list[float],
+        length: float,
+        angle: float = 90.0,
+        bend_radius: float | None = None,
+        flip: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """A flange off the sheet edge nearest a point.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Error unless the adapter implements it.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="add_edge_flange is not implemented by this adapter",
+        )
+
+    async def create_sketched_bend(
+        self,
+        angle: float = 90.0,
+        bend_radius: float | None = None,
+        sketch: str | None = None,
+        reverse: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Bend the sheet along a sketched line.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Error unless the adapter implements it.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="create_sketched_bend is not implemented by this adapter",
+        )
+
+    async def set_flat_pattern(self, flat: bool) -> AdapterResult[dict[str, Any]]:
+        """Flatten the sheet-metal part, or fold it back.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Error unless the adapter implements it.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="set_flat_pattern is not implemented by this adapter",
+        )
+
+    async def get_template_folders(self) -> AdapterResult[dict[str, Any]]:
+        """SolidWorks' document template folders and the active document's template extension.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Error unless the adapter implements it.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="get_template_folders is not implemented by this adapter",
+        )
+
+    async def save_as_template(self, file_path: str) -> AdapterResult[dict[str, Any]]:
+        """Save a copy of the active document as a template.
+
+        Args:
+            file_path: The template's full path, with the document's template
+                extension (.prtdot, .asmdot or .drwdot).
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Error unless the adapter implements it.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="save_as_template is not implemented by this adapter",
+        )
+
     @abstractmethod
     async def get_model_info(self) -> AdapterResult[dict[str, Any]]:
         """Get metadata for the active model.
@@ -594,11 +685,17 @@ class SolidWorksAdapter(ABC):
 
     # Sketch Operations
     @abstractmethod
-    async def create_sketch(self, plane: str) -> AdapterResult[str]:
-        """Create a new sketch on the specified plane.
+    async def create_sketch(
+        self,
+        plane: str | None,
+        face_point: tuple[float, float, float] | None = None,
+    ) -> AdapterResult[str]:
+        """Create a new sketch on a plane, or on the flat face at a point.
 
         Args:
-            plane (str): The plane value.
+            plane (str | None): The plane's name; None when ``face_point`` is given.
+            face_point (tuple[float, float, float] | None): ``(x, y, z)`` in mm on
+                a flat face of the active part, in place of ``plane``.
 
         Returns:
             AdapterResult[str]: The result produced by the operation.
@@ -1250,6 +1347,210 @@ class SolidWorksAdapter(ABC):
             error="pattern_circular is not implemented by this adapter",
         )
 
+    async def pattern_linear(
+        self,
+        features: list[str],
+        direction: list[float] | str,
+        count: int,
+        spacing: float,
+        direction2: list[float] | str | None = None,
+        count2: int = 1,
+        spacing2: float = 0.0,
+        reverse: bool = False,
+        reverse2: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Repeat features along one or two directions.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="pattern_linear is not implemented by this adapter",
+        )
+
+    async def create_shell(
+        self,
+        thickness: float,
+        faces: list[list[float]],
+        outward: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Hollow the body to a wall thickness.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="create_shell is not implemented by this adapter",
+        )
+
+    async def add_draft(
+        self,
+        angle: float,
+        faces: list[list[float]],
+        neutral_face: list[float],
+        reverse: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Draft faces against a neutral face.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="add_draft is not implemented by this adapter",
+        )
+
+    async def create_rib(
+        self,
+        sketch: str,
+        thickness: float,
+        both_sides: bool = True,
+        flip_material: bool = False,
+        normal_to_sketch: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a rib from an open sketch.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="create_rib is not implemented by this adapter",
+        )
+
+    async def list_hole_sizes(
+        self,
+        standard: str,
+        hole_type: str,
+        fastener: str | None = None,
+        size: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """List the Hole Wizard hole types and sizes of a standard.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="list_hole_sizes is not implemented by this adapter",
+        )
+
+    async def create_hole(
+        self,
+        face_point: list[float],
+        hole_type: str,
+        standard: str,
+        size: str,
+        end_condition: str = "through_all",
+        depth: float | None = None,
+        positions: list[list[float]] | None = None,
+        fastener: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a Hole Wizard hole at a point on a flat face.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="create_hole is not implemented by this adapter",
+        )
+
+    async def add_cosmetic_thread(
+        self,
+        edge_point: list[float],
+        size: str,
+        diameter: float,
+        end_type: str = "blind",
+        depth: float | None = None,
+        standard: str = "iso",
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a cosmetic thread on a circular edge.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="add_cosmetic_thread is not implemented by this adapter",
+        )
+
+    async def sketch_convert_entities(
+        self,
+        edge_points: list[list[float]] | None = None,
+        face_point: list[float] | None = None,
+        construction: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Copy model edges or a face outline into the open sketch.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="sketch_convert_entities is not implemented by this adapter",
+        )
+
+    async def create_configuration(
+        self,
+        name: str,
+        parent: str | None = None,
+        description: str = "",
+        activate: bool = False,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a configuration to the active model.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="create_configuration is not implemented by this adapter",
+        )
+
+    async def activate_configuration(
+        self,
+        name: str,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Make a configuration active.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="activate_configuration is not implemented by this adapter",
+        )
+
+    async def delete_configuration(
+        self,
+        name: str,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Delete a configuration.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="delete_configuration is not implemented by this adapter",
+        )
+
+    async def active_configuration(
+        self,
+    ) -> AdapterResult[str]:
+        """Read the active configuration's name.
+
+        Returns:
+            AdapterResult[str]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="active_configuration is not implemented by this adapter",
+        )
+
     # Assembly Operations
     async def insert_component(
         self, file_path: str, x: float = 0.0, y: float = 0.0, z: float = 0.0
@@ -1464,6 +1765,115 @@ class SolidWorksAdapter(ABC):
             error="add_note is not implemented by this adapter",
         )
 
+    async def create_section_view(
+        self,
+        view: str,
+        line_start: list[float],
+        line_end: list[float],
+        position: list[float],
+        label: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a section view cut along a line across a drawing view.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="create_section_view is not implemented by this adapter",
+        )
+
+    async def create_detail_view(
+        self,
+        view: str,
+        center: list[float],
+        radius: float,
+        position: list[float],
+        scale: str = "2:1",
+        label: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add a detail view of a circle in a drawing view.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="create_detail_view is not implemented by this adapter",
+        )
+
+    async def add_dimension(
+        self,
+        dimension_type: str,
+        entity1_point: list[float],
+        position: list[float],
+        entity2_point: list[float] | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Add one dimension between drawing entities picked at sheet points.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="add_dimension is not implemented by this adapter",
+        )
+
+    async def auto_dimension_view(
+        self,
+        view: str,
+        scheme: str = "baseline",
+    ) -> AdapterResult[dict[str, Any]]:
+        """Auto-dimension one drawing view.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="auto_dimension_view is not implemented by this adapter",
+        )
+
+    async def update_sheet_format(
+        self,
+        sheet_format: str,
+        paper_size: str | None = None,
+    ) -> AdapterResult[dict[str, Any]]:
+        """Change the active sheet's format and paper size, keeping its views.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="update_sheet_format is not implemented by this adapter",
+        )
+
+    async def update_title_block(
+        self,
+        fields: dict[str, str],
+    ) -> AdapterResult[dict[str, Any]]:
+        """Write title-block fields on the active drawing.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="update_title_block is not implemented by this adapter",
+        )
+
+    async def drawing_report(self) -> AdapterResult[dict[str, Any]]:
+        """Read what check_drawing judges on the active drawing.
+
+        Returns:
+            AdapterResult[dict[str, Any]]: Not implemented by this adapter.
+        """
+        return AdapterResult(
+            status=AdapterResultStatus.ERROR,
+            error="drawing_report is not implemented by this adapter",
+        )
+
     async def list_drawing_views(self) -> AdapterResult[list[str]]:
         """List the views on the active drawing.
 
@@ -1549,13 +1959,14 @@ class SolidWorksAdapter(ABC):
         )
 
     async def suppress_feature(
-        self, name: str, suppress: bool = True
+        self, name: str, suppress: bool = True, configurations: str | list[str] = "this"
     ) -> AdapterResult[dict[str, Any]]:
         """Suppress or unsuppress a named feature.
 
         Args:
             name (str): Feature name.
             suppress (bool): True to suppress, False to unsuppress.
+            configurations (str | list[str]): "this", "all" or names.
 
         Returns:
             AdapterResult[dict[str, Any]]: The resulting state, or error.
@@ -1692,27 +2103,30 @@ class SolidWorksAdapter(ABC):
 
     # Dimension Operations
     @abstractmethod
-    async def get_dimension(self, name: str) -> AdapterResult[float]:
+    async def get_dimension(self, name: str) -> AdapterResult[dict[str, Any]]:
         """Get the value of a dimension.
 
         Args:
             name (str): The name value.
 
         Returns:
-            AdapterResult[float]: The result produced by the operation.
+            AdapterResult[dict[str, Any]]: ``value`` and ``units`` (mm, deg or None).
         """
         pass
 
     @abstractmethod
-    async def set_dimension(self, name: str, value: float) -> AdapterResult[None]:
+    async def set_dimension(
+        self, name: str, value: float, configurations: str | list[str] = "this"
+    ) -> AdapterResult[dict[str, Any]]:
         """Set the value of a dimension.
 
         Args:
             name (str): The name value.
             value (float): The value value.
+            configurations (str | list[str]): "this", "all" or names.
 
         Returns:
-            AdapterResult[None]: The result produced by the operation.
+            AdapterResult[dict[str, Any]]: ``configurations``, the names set in.
         """
         pass
 
@@ -1779,8 +2193,15 @@ class SolidWorksAdapter(ABC):
     async def get_material(
         self,
         configuration: str | None = None,
+        material: str | None = None,
+        database: str | None = None,
     ) -> AdapterResult[dict[str, Any]]:
-        """Read the material assigned to the active part.
+        """Read the active part's material and its properties, or a library material's.
+
+        Args:
+            configuration: Configuration name; the active one when omitted.
+            material: A library material to read instead of the part's.
+            database: The library to look in first for ``material``.
 
         Returns:
             AdapterResult[dict[str, Any]]: Error unless the adapter implements it.
