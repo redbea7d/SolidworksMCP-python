@@ -1974,6 +1974,22 @@ class PyWin32Adapter(
         """
         return self.swApp is not None
 
+    def is_alive(self) -> bool:
+        """Check that the SolidWorks behind ``swApp`` still answers.
+
+        Reads ``RevisionNumber``: one cheap COM call, which fails at once
+        (RPC server unavailable) when SolidWorks was closed or crashed.
+
+        Returns:
+            bool: True if connected and SolidWorks responds, otherwise False.
+        """
+        if self.swApp is None:
+            return False
+        revision = self._attempt(
+            lambda: self._get_attr_or_call(self.swApp, "RevisionNumber")
+        )
+        return revision is not None
+
     async def health_check(self) -> AdapterHealth:
         """Get adapter health status.
 

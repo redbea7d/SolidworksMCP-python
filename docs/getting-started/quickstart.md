@@ -31,7 +31,7 @@ Open SolidWorks, restart your client as setup told you, and ask *"What model is 
 
 - `SolidWorks COM interface is available`
 - `Registered 155 SolidWorks tools` (the count grows as tools are added)
-- `Connecting to SolidWorks for the first tool that needs it`
+- `Connecting to SolidWorks for the tool that needs it`
 
 The server never starts SolidWorks itself. If a tool says `SolidWorks is not running`, open SolidWorks and ask again; no restart is needed.
 

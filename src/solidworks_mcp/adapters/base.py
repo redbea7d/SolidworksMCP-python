@@ -386,6 +386,17 @@ class SolidWorksAdapter(ABC):
         """
         pass
 
+    def is_alive(self) -> bool:
+        """Check that the connected SolidWorks still answers.
+
+        ``is_connected`` only says a handle is held; an adapter whose handle
+        can go stale (SolidWorks closed or crashed) overrides this to ask.
+
+        Returns:
+            bool: True if connected and responding, otherwise False.
+        """
+        return self.is_connected()
+
     @abstractmethod
     async def health_check(self) -> AdapterHealth:
         """Get adapter health status.

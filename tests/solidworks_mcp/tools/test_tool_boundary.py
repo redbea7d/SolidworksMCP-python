@@ -585,9 +585,13 @@ class _FakeAdapter:
         self.connects = 0
         self.disconnects = 0
         self.connect_error = connect_error
+        self.answers = True  # False: SolidWorks closed behind the handle
 
     def is_connected(self) -> bool:
         return self.connected
+
+    def is_alive(self) -> bool:
+        return self.connected and self.answers
 
     async def connect(self) -> None:
         self.connects += 1
@@ -726,6 +730,38 @@ async def test_solidworks_going_away_drops_the_connection_for_a_fresh_one() -> N
     assert failed["error_type"] == "solidworks_unavailable"
     assert recovered == {"status": "success"}
     assert (adapter.connects, adapter.disconnects) == (2, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_dead_handle_is_replaced_before_the_tool_runs() -> None:
+    adapter = _FakeAdapter()
+    mcp, ran = _guarded(adapter)
+    await _call(mcp, "body")
+
+    adapter.answers = False  # SolidWorks closed and reopened
+    result = await _call(mcp, "body")
+
+    assert result == {"status": "success", "connected": True}
+    assert (adapter.connects, adapter.disconnects) == (2, 1)
+    assert ran == ["body", "body"]
+
+
+@pytest.mark.asyncio
+async def test_a_dead_handle_with_no_solidworks_says_not_running() -> None:
+    from solidworks_mcp.exceptions import SolidWorksNotRunningError
+
+    adapter = _FakeAdapter()
+    mcp, ran = _guarded(adapter)
+    await _call(mcp, "body")
+
+    adapter.answers = False  # SolidWorks closed
+    adapter.connect_error = SolidWorksNotRunningError("SolidWorks is not running.")
+    result = await _call(mcp, "body")
+
+    assert result["error_type"] == "solidworks_unavailable"
+    assert result["message"] == "SolidWorks is not running."
+    assert ran == ["body"]  # the second call never reached the tool
+    assert not adapter.is_connected()
 
 
 @pytest.mark.asyncio

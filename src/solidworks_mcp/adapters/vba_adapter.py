@@ -87,6 +87,14 @@ class VbaGeneratorAdapter:
         """
         return bool(self._backing_adapter.is_connected())
 
+    def is_alive(self) -> bool:
+        """Return whether the wrapped adapter's SolidWorks still answers.
+
+        Returns:
+            bool: True if connected and responding, otherwise False.
+        """
+        return bool(self._backing_adapter.is_alive())
+
     async def health_check(self) -> Any:
         """Return wrapped adapter health with VBA route marker.
 

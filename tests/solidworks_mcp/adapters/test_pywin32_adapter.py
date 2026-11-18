@@ -1088,6 +1088,35 @@ class TestComThreadAffinity:
         assert result.is_success
 
 
+class TestIsAlive:
+    """is_alive asks SolidWorks for its revision; a dead handle fails that."""
+
+    def test_no_handle_is_not_alive(self, monkeypatch) -> None:
+        adapter = TestPyWin32AdapterAdditionalCoverage._build_adapter(monkeypatch)
+        adapter.swApp = None
+
+        assert adapter.is_alive() is False
+
+    def test_a_responding_solidworks_is_alive(self, monkeypatch) -> None:
+        adapter = TestPyWin32AdapterAdditionalCoverage._build_adapter(monkeypatch)
+        adapter.swApp = SimpleNamespace(RevisionNumber="34.1.0")
+
+        assert adapter.is_alive() is True
+
+    def test_a_closed_solidworks_is_not_alive(self, monkeypatch) -> None:
+        adapter = TestPyWin32AdapterAdditionalCoverage._build_adapter(monkeypatch)
+
+        class _Dead:
+            @property
+            def RevisionNumber(self) -> str:  # noqa: N802 - COM name
+                raise RuntimeError("The RPC server is unavailable.")
+
+        adapter.swApp = _Dead()
+
+        assert adapter.is_alive() is False
+        assert adapter.is_connected() is True  # the handle is still held
+
+
 class TestAttachOnly:
     """By default connect attaches to a running SolidWorks and never starts one."""
 

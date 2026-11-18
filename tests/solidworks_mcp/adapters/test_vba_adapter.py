@@ -33,6 +33,13 @@ async def test_connect_disconnect_and_is_connected_delegate() -> None:
     assert adapter.is_connected() is True
 
 
+def test_is_alive_delegates() -> None:
+    """is_alive should ask the backing adapter whether SolidWorks answers."""
+    backing = SimpleNamespace(is_alive=lambda: False)
+
+    assert VbaGeneratorAdapter(backing).is_alive() is False
+
+
 @pytest.mark.asyncio
 async def test_health_check_adds_vba_route() -> None:
     """health_check should append vba route to metrics."""

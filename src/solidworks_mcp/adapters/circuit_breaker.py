@@ -422,6 +422,14 @@ class CircuitBreakerAdapter(SolidWorksAdapter):
         """
         return self.adapter.is_connected()
 
+    def is_alive(self) -> bool:
+        """Check that the wrapped adapter's SolidWorks still answers.
+
+        Returns:
+            bool: True if connected and responding, otherwise False.
+        """
+        return bool(self.adapter.is_alive())
+
     async def health_check(self) -> AdapterHealth:
         """Get health check with circuit breaker status.
 

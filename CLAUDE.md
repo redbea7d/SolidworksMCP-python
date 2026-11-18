@@ -159,11 +159,10 @@ updated 2026-04-24.
   since quit and reopened SolidWorks. Pointer is dangling.
 - **Check:** compare MCP server start time (Claude `main.log` →
   `Launching MCP Server: solidworks`) to current `SLDWORKS.exe` start time.
-- **Fix:** call any SolidWorks tool twice. The first call fails with
-  `solidworks_unavailable`, which makes `ConnectionGuard`
-  (`tools/tool_boundary.py`) drop the dead handle; the second reconnects.
-  If a dead handle fails with some other error type, restart Claude Desktop
-  (respawns the MCP server).
+- **Fix:** none needed now: before every tool that needs SolidWorks running,
+  `ConnectionGuard` (`tools/tool_boundary.py`) asks the adapter `is_alive()`
+  (a `RevisionNumber` read), drops a dead handle and reconnects. If it still
+  happens, restart Claude Desktop (respawns the MCP server) and report it.
 
 ### 4. `Circuit breaker is open for <tool>`
 
@@ -279,8 +278,9 @@ adapter).
 The server does not connect at start (``connect_on_startup`` is off) and
 ``connect()`` only attaches to a running SolidWorks (``GetActiveObject``)
 unless ``SOLIDWORKS_MCP_LAUNCH_SOLIDWORKS`` is set. ``ConnectionGuard`` in
-``tools/tool_boundary.py`` connects before the first tool whose requirement
-is ``running``, on the event-loop thread the tools run on.
+``tools/tool_boundary.py`` checks before every tool whose requirement is
+``running`` that SolidWorks still answers (``adapter.is_alive()``), and
+connects - again, after a restart - on the event-loop thread the tools run on.
 
 ``_ComSessionCoordinator.connect()`` runs ``pythoncom.CoInitialize()`` and
 acquires ``swApp`` on the calling thread, which is the server's asyncio

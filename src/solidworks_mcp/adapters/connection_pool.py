@@ -442,6 +442,14 @@ class ConnectionPoolAdapter(SolidWorksAdapter):
         """
         return self.pool_initialized and len(self.pool) > 0
 
+    def is_alive(self) -> bool:
+        """Check that every pooled adapter's SolidWorks still answers.
+
+        Returns:
+            bool: True if the pool is up and every adapter responds.
+        """
+        return self.is_connected() and all(a.is_alive() for a in self.pool)
+
     async def health_check(self) -> AdapterHealth:
         """Get health status of the connection pool.
 
